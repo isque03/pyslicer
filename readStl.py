@@ -125,20 +125,22 @@ class Model:
         self.zmax = -sys.maxint - 1
         self.nozzle_diameter = 0.5
         self.layerHeight = 1.0 * self.nozzle_diameter
-        self.retract_amount = 6.0
-        self.retract_speed =3600
-        self.unretract_speed = 1200
-        self.default_print_speed = 3600
-        self.default_travel_speed = 5400
-        self.default_z_speed = 1000
+        self.retract_amount = 3.0
+        self.retract_speed = 6200
+        self.unretract_speed = 3400
+        self.default_print_speed = 4200
+        self.default_travel_speed = 8000
+        self.default_z_speed = 2400
         self.filament_diameter = 1.75
         self.number_perimeters = 2
         self.processing_threads = 4
-        self.infill_density = 0.1
+        self.infill_density = 0.25
+        self.infill_angle=45.0
         self.width_over_height = 1.9
         self.perimeters_only = True
         self.append_perimeters = True
         self.perimeter_overlap_percent = 1.0
+        self.minimum_retract_travel=3.0
         # Print Temp in degrees C
         self.print_temperature = 180.0
         # nozzle diameter divided by this equals the tolerance for curve simplification
@@ -146,7 +148,7 @@ class Model:
         # remove contours with a winding area smaller than this
         self.min_contour_area = 50000.00
         # shortest distance to extrude when infilling
-        self.min_extrude = 2.0 * self.nozzle_diameter
+        self.min_extrude = 1.25 * self.nozzle_diameter
         self.contours = []
         # experiement
         self.vertices = []
@@ -232,7 +234,13 @@ class Model:
         volume = length * self.layerHeight * self.nozzle_diameter
         return volume
 
+    def pi_r_squared(self):
+        pirsquared = math.pi * math.pow((self.filament_diameter / 2.0), 2.0)
+        return pirsquared
+
     def writeGCode(self, filename):
+
+
 
         logger.info('Writing {0}'.format(filename))
         f = open(filename, 'w')
@@ -244,7 +252,7 @@ class Model:
         f.write('G92 E0    ; Zero extruder\n')
         f.write('M82       ; Use absolute distances for extrusion\n')
         f.write('G92 E0    ; Zero extruder\n')
-        f.write('G1 F200 E4  ; prime extruder')
+        f.write('G1 F200 E8  ; prime extruder\n')
         f.write('G92 E0    ; Zero extruder\n')
         f.write('M117 Printing.\n')
         f.write('\n')
@@ -253,21 +261,28 @@ class Model:
         logger.debug(
             'size of infill at layer is {0} model is {1}'.format(len(self.infillAtLayer), len(self.contours)))
         # we need this later for extruder calculations. do it once here.
-        pirsquared = math.pi * math.pow((self.filament_diameter / 2.0), 2.0)
+        pirsquared = self.pi_r_squared()
         for layer in self.layers:
             f.write(';; New Layer Z: {0} \n'.format(layer.z))
-            for x in xrange(len(layer.perimeters) - 2, -1, -1):
-                for contour in layer.perimeters[x]:
+            contourIndex = 0
+            while True:
+                contoursWritten = 0
+                for x in xrange(len(layer.perimeters) -1, -1, -1):
+                    #for contour in layer.perimeters[x]:
+                    if len(layer.perimeters[x]) < contourIndex+1:
+                       continue
+                    f.write(';; Perimeter {}\n'.format(x))
+                    contoursWritten += 1
+                    contour = layer.perimeters[x][contourIndex]
                     if (len(contour.segments) < 1):
                         continue
-                    # move to Z level
-                    # f.write('G92 E0\n')
-                    f.write(';; Perimeter {}\n'.format(x))
-                    # if lastZ is not None and (lastZ != contour.zlevel):
                     if lastZ is None or (lastZ != contour.zlevel):
+                        e = self.retract(e, f)
                         f.write('G1 F{1:.6f} Z{0:.6f}\n'.format(contour.zlevel, self.default_z_speed))
+                        e = self.extrude(e, f)
                         # print '===== {0} ====='.format(contour.zlevel)
                     lastZ = contour.zlevel
+                    f.write(';; Contour {} Area: {}\n'.format(contourIndex, abs(contour.winding_area())))
                     f.write('G1 F{0:.6f}\n'.format(self.default_print_speed))
                     for idx, segment in enumerate(contour.segments):
                         volume = self.volume_extruded(segment)
@@ -275,29 +290,39 @@ class Model:
                         extrude_amount = (volume / pirsquared)
                         # f.write(';; length {} volume {} pirsquared {}\n'.format(length, volume, pirsquared))
                         e = self.writeSegmentGCode(f, idx, segment, e, extrude_amount)
+                contourIndex += 1
+                # check if we are done
+                if contoursWritten == 0:
+                    break
 
             # write infill at this z level
             try:
                 infill = self.infillAtLayer[lastZ]
                 f.write(';; Infill\n')
                 prevSegment = None
-
                 for idx, segment in enumerate(infill):
-
-
                     # Don't need this travel move step all the time
                     travelMove = False
                     if idx == 0: travelMove = True
                     if (prevSegment is not None and (prevSegment.verticies[1] != segment.verticies[0])):
                         travelMove = True
                     if travelMove:
-                        f.write(';; retract \n')
-                        e = self.retract(e, f)
-                        f.write(';;infill travel move \n')
+                        # Calc travel distance
+                        travel_distance = 0.0
+                        if prevSegment:
+                            l = Line.withVerticies(prevSegment.verticies[1], segment.verticies[0])
+                            travel_distance = l.magnitude()
+                        if travel_distance >= self.minimum_retract_travel:
+                            # or exceed some distance
+                            f.write(';; retract \n')
+                            e = self.retract(e, f)
+                        f.write(';;infill travel move. distance: {0:.6f} \n'.format(travel_distance))
                         f.write('G1 F{2:.6f} X{0:.6f} Y{1:.6f}\n'.format(
                             segment.verticies[0].x, segment.verticies[0].y, self.default_travel_speed))
-                        e = self.extrude(e, f)
-                        f.write('G1 F{0:.6f} '.format(self.default_print_speed))
+                        if travel_distance >= self.minimum_retract_travel:
+                            e = self.extrude(e, f)
+                        # Back to slower print speed
+                        f.write('G1 F{0:.6f}\n'.format(self.default_print_speed))
 
                     # get the amount of filament needed to extrude that volume of material
                     volume = self.volume_extruded(segment)
@@ -323,14 +348,26 @@ class Model:
                 f.write(';; Roofs\n')
                 for contour in layer.roofs:
                     for idx, segment in enumerate(contour.segments):
-                        self.writeSegmentGCode(f, idx, segment, e)
+                        extrude_amount = (volume / pirsquared)
+                        self.writeSegmentGCode(f, idx, segment, e, extrude_amount)
                         e += 1.0
                 f.write(';; Overhang\n')
                 for contour in layer.overhang:
                     for idx, segment in enumerate(contour.segments):
-                        self.writeSegmentGCode(f, idx, segment, e)
+                        extrude_amount = (volume / pirsquared)
+                        self.writeSegmentGCode(f, idx, segment, e, extrude_amount)
                         e += 1.0
 
+        # END
+        f.write('M107    ; Fan off\n')
+        f.write('M104 S0 ; Heat off {0}C\n')
+        f.write('M140 S0 ; Bed heat off\n')
+        f.write('G91     ; Relative\n')
+        f.write('G1 E-1 F400 ; Retract\n')
+        f.write('G1 Z+1.0 E-5 X-20 Y-20 F9000\n')
+        f.write('G28 X0 Y0\n')
+        f.write('M84     ; Motors off\n')
+        f.write('G90     ; Absolute\n')
         f.close()
 
 
@@ -1686,8 +1723,8 @@ def process_layer(zcur, model, mintolerance=0.001):
     #offset = offset_contours(pre_contours, model.nozzle_diameter / 2.0, zcur)
     contours = []
     perimeters = make_perimeters(pre_contours, model, zcur)
-    for perimeter in perimeters:
-        perimeter.sort(key=lambda contour: contour.winding_area())
+    #for perimeter in perimeters:
+    #    perimeter.sort(key=lambda contour: abs(contour.winding_area()))
     infill = []
 
     layer = Layer()
@@ -2640,10 +2677,10 @@ if __name__ == "__main__":
             for layerNum in xrange(len(layers)):
                 z = layers[layerNum].z
                 if layerNum % 2:
-                    angle = 45.0
+                    angle = model.infill_angle
                 else:
-                    angle = -45.0
-                # TODO: Calculate roof thickness rather than hard coding a nimber of layers
+                    angle = -model.infill_angle
+                # TODO: Calculate roof thickness rather than hard coding a number of layers
                 if layerNum < 4 or layerNum > len(layers) - 4:
                     logger.info('z: {} perimeter count {} contour count {}'.format(z, len(layers[layerNum].perimeters),
                                                                                    len(layers[layerNum].perimeters[
