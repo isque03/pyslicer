@@ -61,6 +61,11 @@ def build_arg_parser():
         type=float,
         default=0.1,
     )
+    parser.add_argument(
+        "--html-preview",
+        metavar="PATH",
+        help="Also write an HTML toolpath preview to this path.",
+    )
     return parser
 
 
@@ -179,6 +184,16 @@ def run(args):
         with Timer() as gcode_time:
             model.writeGCode(args.output)
         logger.warning("GCode generation took %s seconds", gcode_time.secs)
+
+        if args.html_preview:
+            from pyslicer.preview import write_gcode_preview
+
+            preview_path = write_gcode_preview(
+                args.output,
+                args.html_preview,
+                subtitle=f"From {args.stl}",
+            )
+            logger.info("HTML preview wrote %s", preview_path)
 
     logger.info("TOTAL TIME %s seconds", total_time.secs)
     logger.info(

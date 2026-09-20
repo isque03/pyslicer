@@ -51,6 +51,23 @@ Example with a thicker layer and two walls:
 pyslicer model.stl output.gcode -l 0.2 -n 2
 ```
 
+## Preview G-code in a browser
+
+After you have a `.gcode` file:
+
+```bash
+python -m pyslicer.preview output.gcode preview.html
+```
+
+Or while slicing, write both at once:
+
+```bash
+pyslicer model.stl output.gcode --html-preview preview.html
+```
+
+Open the HTML file in any browser. You get a rotatable 3D view of the toolpaths
+(drag to spin, scroll to zoom), per-layer 2D drawings, and the full G-code listing.
+
 ## Tests
 
 ```bash
