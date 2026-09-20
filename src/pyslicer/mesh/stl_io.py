@@ -89,16 +89,36 @@ def process_binary_stl(fp, model):
         read_triangle(fp, model)
 
 
+def _looks_like_binary_stl(fp) -> bool:
+    """True when the file is a binary STL (even if the header says 'solid').
+
+    Accepts trailing padding after the triangle records. Rejects sizes that
+    cannot hold the declared triangle count.
+    """
+    fp.seek(0, 2)
+    size = fp.tell()
+    if size < 84:
+        return False
+    fp.seek(80)
+    num_triangles = unpack("<I", fp.read(4))[0]
+    # Guard absurd counts that would imply a multi-GB triangle block
+    if num_triangles > 100_000_000:
+        return False
+    expected = 84 + num_triangles * 50
+    return size >= expected
+
+
 def read_file(name, model):
     with open(name, "rb") as infile:
         model.name = infile.name
-        first_line = infile.readline()
-        if not first_line.startswith(b"solid"):
+        if _looks_like_binary_stl(infile):
             infile.seek(0)
             process_binary_stl(infile, model)
         else:
             infile.seek(0)
             process_ascii_stl(infile, model)
+    if not model.facets:
+        raise ValueError(f"STL contained no triangles: {name}")
     model.rebuild_facet_arrays()
     return model
 

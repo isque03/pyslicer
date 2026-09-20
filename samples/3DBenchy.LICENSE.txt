@@ -1,0 +1,3 @@
+#3DBenchy by Creative Tools — https://www.3dbenchy.com/
+License: CC0 1.0 Universal (public domain dedication)
+Source: https://github.com/CreativeTools/3DBenchy

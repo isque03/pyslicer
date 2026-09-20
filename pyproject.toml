@@ -19,10 +19,15 @@ dev = [
     "pytest>=7.0",
     "coverage>=7.0",
     "pytest-cov>=4.0",
+    "pillow>=10.0",
+]
+demo = [
+    "pillow>=10.0",
 ]
 
 [project.scripts]
 pyslicer = "pyslicer.cli:main"
+pyslicer-demo = "pyslicer.demo:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

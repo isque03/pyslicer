@@ -1,14 +1,19 @@
-"""G-code HTML preview: 2D layers, 3D orbit view, and G-code listing."""
+"""G-code HTML preview: assemble 2D layers, 3D orbit view, and listing."""
 
 from __future__ import annotations
 
 import html
 import json
-import re
 from pathlib import Path
 
-_G1_RE = re.compile(r"([XYZEF])(-?\d+(?:\.\d+)?)", re.IGNORECASE)
-_LAYER_RE = re.compile(r"Z:\s*([-\d.]+)")
+from pyslicer.preview.gcode_parse import (
+    DEFAULT_NOZZLE_DIAMETER_MM,
+    layers_to_toolpaths_3d,
+    parse_gcode,
+    parse_gcode_layers,
+    parse_toolpath_moves,
+)
+from pyslicer.preview.viewer_js import viewer_script
 
 # Three.js r170 ES modules (CDN)
 _THREE_IMPORTMAP = """{
@@ -17,74 +22,6 @@ _THREE_IMPORTMAP = """{
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
   }
 }"""
-
-
-def parse_gcode_layers(gcode: str) -> list[dict]:
-    """
-    Split G-code into layers with extrude and travel segments.
-
-    Each layer: {z, extrude: [((x0,y0),(x1,y1)), ...], travel: [...]}
-    """
-    layers: list[dict] = []
-    current = None
-    x = y = z = None
-    e = 0.0
-    last_e = 0.0
-
-    for raw in gcode.splitlines():
-        if raw.startswith(";; New Layer Z:"):
-            m = _LAYER_RE.search(raw)
-            zval = float(m.group(1)) if m else None
-            current = {"z": zval, "extrude": [], "travel": []}
-            layers.append(current)
-            continue
-
-        line = raw.split(";")[0].strip()
-        if not line or current is None:
-            continue
-        if not line.upper().startswith("G1"):
-            continue
-
-        params = {k.upper(): float(v) for k, v in _G1_RE.findall(line)}
-        nx = params.get("X", x)
-        ny = params.get("Y", y)
-        nz = params.get("Z", z)
-        ne = params.get("E", e)
-
-        if (
-            nx is not None
-            and ny is not None
-            and x is not None
-            and y is not None
-            and ("X" in params or "Y" in params)
-        ):
-            seg = ((x, y), (nx, ny))
-            if "E" in params and ne > last_e:
-                current["extrude"].append(seg)
-            else:
-                current["travel"].append(seg)
-
-        x = nx if nx is not None else x
-        y = ny if ny is not None else y
-        z = nz if nz is not None else z
-        e = ne if ne is not None else e
-        if "E" in params:
-            last_e = e
-
-    return layers
-
-
-def layers_to_toolpaths_3d(layers: list[dict]) -> dict:
-    """Flatten layers into 3D polylines for the orbit viewer (mm coords)."""
-    extrude: list[list[float]] = []
-    travel: list[list[float]] = []
-    for i, layer in enumerate(layers):
-        z = float(layer["z"]) if layer["z"] is not None else float(i)
-        for a, b in layer["extrude"]:
-            extrude.append([a[0], a[1], z, b[0], b[1], z])
-        for a, b in layer["travel"]:
-            travel.append([a[0], a[1], z, b[0], b[1], z])
-    return {"extrude": extrude, "travel": travel}
 
 
 def _bounds(layers: list[dict]) -> tuple[float, float, float, float]:
@@ -96,7 +33,7 @@ def _bounds(layers: list[dict]) -> tuple[float, float, float, float]:
                 xs.extend([a[0], b[0]])
                 ys.extend([a[1], b[1]])
     if not xs:
-        return 0.0, 10.0, 0.0, 10.0
+        raise ValueError("No toolpath geometry to bound for preview")
     return min(xs), max(xs), min(ys), max(ys)
 
 
@@ -107,96 +44,22 @@ def _path_d(segs: list[tuple]) -> str:
     return " ".join(parts)
 
 
-def _viewer_script() -> str:
-    return r"""
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-
-const data = window.PYSLICER_TOOLPATHS;
-const mount = document.getElementById('viewer3d');
-if (!mount || !data) throw new Error('Missing 3D mount or toolpath data');
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xfafafa);
-
-const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 5000);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-mount.appendChild(renderer.domElement);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.rotateSpeed = 0.85;
-
-scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-const key = new THREE.DirectionalLight(0xffffff, 0.45);
-key.position.set(2, 4, 3);
-scene.add(key);
-
-function addSegments(segments, color, linewidth) {
-  if (!segments.length) return null;
-  const positions = new Float32Array(segments.length * 6);
-  for (let i = 0; i < segments.length; i++) {
-    const s = segments[i];
-    // G-code Z-up → Three.js Y-up
-    const o = i * 6;
-    positions[o] = s[0]; positions[o+1] = s[2]; positions[o+2] = -s[1];
-    positions[o+3] = s[3]; positions[o+4] = s[5]; positions[o+5] = -s[4];
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  const mat = new THREE.LineBasicMaterial({ color, linewidth });
-  const lines = new THREE.LineSegments(geo, mat);
-  scene.add(lines);
-  return lines;
-}
-
-addSegments(data.travel || [], 0x9a9a9a, 1);
-addSegments(data.extrude || [], 0x0a7a4b, 2);
-
-const box = new THREE.Box3().setFromObject(scene);
-const size = box.getSize(new THREE.Vector3());
-const center = box.getCenter(new THREE.Vector3());
-const span = Math.max(size.x, size.y, size.z, 1);
-controls.target.copy(center);
-camera.position.set(center.x + span * 1.4, center.y + span * 1.1, center.z + span * 1.4);
-camera.near = span / 200;
-camera.far = span * 40;
-camera.updateProjectionMatrix();
-controls.update();
-
-const grid = new THREE.GridHelper(span * 2.2, 16, 0xd0d0d0, 0xe8e8e8);
-grid.position.set(center.x, box.min.y - 0.01, center.z);
-scene.add(grid);
-
-function resize() {
-  const w = mount.clientWidth;
-  const h = Math.max(320, Math.round(w * 0.62));
-  renderer.setSize(w, h, false);
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-}
-resize();
-window.addEventListener('resize', resize);
-
-(function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
-})();
-"""
-
-
 def render_gcode_html(
     gcode: str,
     *,
     title: str = "pyslicer preview",
     subtitle: str | None = None,
+    nozzle_diameter: float = DEFAULT_NOZZLE_DIAMETER_MM,
+    layer_height: float | None = None,
 ) -> str:
     """Return a self-contained HTML document with 2D layers and a 3D orbit view."""
-    layers = parse_gcode_layers(gcode)
-    paths_3d = layers_to_toolpaths_3d(layers)
+    layers, moves = parse_gcode(gcode)
+    paths_3d = layers_to_toolpaths_3d(
+        layers,
+        nozzle_diameter=nozzle_diameter,
+        layer_height=layer_height,
+        moves=moves,
+    )
     paths_json = json.dumps(paths_3d, separators=(",", ":"))
 
     minx, maxx, miny, maxy = _bounds(layers)
@@ -216,7 +79,7 @@ def render_gcode_html(
         n_t = len(layer["travel"])
         layer_blocks.append(
             f"""
-      <article class="layer">
+      <article class="layer" data-z="{ez}">
         <h2>Z {ez}</h2>
         <p class="meta">{n_e} extrude · {n_t} travel</p>
         <svg viewBox="{vb}" xmlns="http://www.w3.org/2000/svg" aria-label="Layer at Z {ez}">
@@ -244,8 +107,8 @@ def render_gcode_html(
   :root {{
     --text: #1a1a1a;
     --muted: #5c5c5c;
-    --extrude: #0a7a4b;
-    --travel: #9a9a9a;
+    --extrude: #0072b2;
+    --travel: #e69f00;
     --bg: #fafafa;
   }}
   * {{ box-sizing: border-box; }}
@@ -281,15 +144,30 @@ def render_gcode_html(
   .legend span + span {{ margin-left: 1.25rem; }}
   .swatch {{
     display: inline-block;
-    width: 1.1rem;
-    height: 2px;
     margin-right: 0.35rem;
     vertical-align: middle;
   }}
-  .swatch.extrude {{ background: var(--extrude); }}
-  .swatch.travel {{ background: var(--travel); }}
+  .swatch.extrude {{
+    width: 0.85rem;
+    height: 0.45rem;
+    background: var(--extrude);
+  }}
+  .swatch.travel {{
+    width: 1.1rem;
+    height: 2px;
+    background: var(--travel);
+  }}
   .viewer-block {{
     margin-bottom: 3rem;
+  }}
+  .viewer-row {{
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(11rem, 14rem);
+    gap: clamp(1.25rem, 3vw, 2.5rem);
+    align-items: start;
+  }}
+  @media (max-width: 720px) {{
+    .viewer-row {{ grid-template-columns: 1fr; }}
   }}
   .viewer-block h2,
   .layers-heading,
@@ -314,6 +192,85 @@ def render_gcode_html(
     display: block;
     width: 100%;
     height: auto;
+  }}
+  .viewer-controls {{
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding-top: 0.15rem;
+  }}
+  .viewer-controls h2 {{
+    margin: 0 0 0.35rem;
+  }}
+  .control {{
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }}
+  .control .control-head {{
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text);
+  }}
+  .control .control-meta {{
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }}
+  .control .control-help {{
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }}
+  .control input[type="range"] {{
+    width: 100%;
+    margin: 0;
+    accent-color: var(--extrude);
+  }}
+  .control.travel-accent input[type="range"] {{
+    accent-color: var(--travel);
+  }}
+  .sim-transport {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }}
+  .sim-transport button {{
+    font: inherit;
+    font-size: 0.8rem;
+    padding: 0.35rem 0.55rem;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid #c8c8c8;
+    cursor: pointer;
+  }}
+  .sim-transport button:hover:not(:disabled) {{
+    border-color: var(--text);
+  }}
+  .sim-transport button:disabled {{
+    opacity: 0.4;
+    cursor: default;
+  }}
+  .sim-speeds {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text);
+  }}
+  .sim-speeds label {{
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    cursor: pointer;
+  }}
+  .sim-speeds input {{
+    margin: 0;
+    accent-color: var(--extrude);
   }}
   .layout {{
     display: grid;
@@ -390,8 +347,58 @@ def render_gcode_html(
 
     <section class="viewer-block" aria-label="3D toolpath view">
       <h2>3D view</h2>
-      <p class="viewer-hint">Drag to rotate · scroll to zoom · right-drag to pan</p>
-      <div id="viewer3d"></div>
+      <p class="viewer-hint">Drag to rotate · scroll to zoom · right-drag to pan · filament uses stadium bead cross-section</p>
+      <div class="viewer-row">
+        <div id="viewer3d"></div>
+        <aside class="viewer-controls" aria-label="Preview controls">
+          <div class="control">
+            <div class="control-head">
+              <span>Simulated print</span>
+              <span class="control-meta"><span id="sim-pct">100%</span> · <span id="sim-z">Z —</span></span>
+            </div>
+            <div class="sim-transport" role="group" aria-label="Playback">
+              <button type="button" id="sim-rewind" title="Rewind to start">Rewind</button>
+              <button type="button" id="sim-play" title="Play">Play</button>
+              <button type="button" id="sim-pause" title="Pause">Pause</button>
+              <button type="button" id="sim-ff" title="Fast forward">Fast forward</button>
+            </div>
+            <input id="sim-scrub" type="range" min="0" max="100" step="0.1" value="100"
+              aria-label="Playback position"/>
+            <div class="sim-speeds" role="radiogroup" aria-label="Playback speed">
+              <label><input type="radio" name="sim-speed" value="0.25"/> 0.25×</label>
+              <label><input type="radio" name="sim-speed" value="0.5"/> 0.5×</label>
+              <label><input type="radio" name="sim-speed" value="1" checked/> 1×</label>
+              <label><input type="radio" name="sim-speed" value="2"/> 2×</label>
+              <label><input type="radio" name="sim-speed" value="4"/> 4×</label>
+            </div>
+            <p class="control-help">Watch the nozzle follow the G-code; filament appears as it is printed.</p>
+            <div class="sim-transport" role="group" aria-label="Export">
+              <button type="button" id="export-movie-start" title="Record WebM movie">Record movie</button>
+              <button type="button" id="export-movie-stop" title="Stop and download movie" disabled>Stop movie</button>
+              <button type="button" id="export-gif" title="Export GIF clip at current speed">Export GIF</button>
+            </div>
+            <p id="export-status" class="control-help" aria-live="polite"></p>
+          </div>
+          <div class="control">
+            <div class="control-head">
+              <label for="cutaway">Print progress</label>
+              <span class="control-meta"><span id="cutaway-pct">100%</span> · <span id="cutaway-z">Z —</span></span>
+            </div>
+            <input id="cutaway" type="range" min="0" max="100" step="1" value="100"
+              aria-describedby="cutaway-help"/>
+            <p id="cutaway-help" class="control-help">Cutaway to how far the print would be at this percent.</p>
+          </div>
+          <div class="control travel-accent">
+            <div class="control-head">
+              <label for="filament-opacity">Filament opacity</label>
+              <span class="control-meta" id="opacity-pct">100%</span>
+            </div>
+            <input id="filament-opacity" type="range" min="5" max="100" step="1" value="100"
+              aria-describedby="opacity-help"/>
+            <p id="opacity-help" class="control-help">Opacity of extruded filament.</p>
+          </div>
+        </aside>
+      </div>
     </section>
 
     <div class="layout">
@@ -411,7 +418,7 @@ def render_gcode_html(
     window.PYSLICER_TOOLPATHS = {paths_json};
   </script>
   <script type="module">
-{_viewer_script()}
+{viewer_script()}
   </script>
 </body>
 </html>
@@ -424,6 +431,8 @@ def write_gcode_preview(
     *,
     title: str | None = None,
     subtitle: str | None = None,
+    nozzle_diameter: float = DEFAULT_NOZZLE_DIAMETER_MM,
+    layer_height: float | None = None,
 ) -> Path:
     """Read a G-code file and write an HTML preview. Returns the HTML path."""
     gcode_path = Path(gcode_path)
@@ -433,7 +442,20 @@ def write_gcode_preview(
         text,
         title=title or f"pyslicer — {gcode_path.name}",
         subtitle=subtitle,
+        nozzle_diameter=nozzle_diameter,
+        layer_height=layer_height,
     )
     html_path.parent.mkdir(parents=True, exist_ok=True)
     html_path.write_text(doc, encoding="utf-8")
     return html_path
+
+
+# Re-exports for callers that imported parsers from gcode_html
+__all__ = [
+    "parse_gcode",
+    "parse_gcode_layers",
+    "parse_toolpath_moves",
+    "layers_to_toolpaths_3d",
+    "render_gcode_html",
+    "write_gcode_preview",
+]

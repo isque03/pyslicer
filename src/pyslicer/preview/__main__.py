@@ -24,6 +24,12 @@ def build_arg_parser():
         default=None,
         help="Optional subtitle under the title.",
     )
+    parser.add_argument(
+        "--nozzle-diameter",
+        type=float,
+        default=0.5,
+        help="Nozzle diameter in mm (sets 3D extrude tube thickness).",
+    )
     return parser
 
 
@@ -34,6 +40,7 @@ def main(argv=None):
         args.html,
         title=args.title,
         subtitle=args.subtitle,
+        nozzle_diameter=args.nozzle_diameter,
     )
     print(f"Wrote {Path(path).resolve()}")
 

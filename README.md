@@ -4,6 +4,8 @@ pyslicer turns a 3D model file (STL) into printer instructions (G-code) for a fi
 
 It reads the model, cuts it into thin layers, draws the outer walls and fill pattern, then writes a G-code file your printer can run.
 
+![Simulated #3DBenchy print at 2×](docs/benchy_demo.gif)
+
 ## Requirements
 
 - Python 3.10 or newer
@@ -67,6 +69,27 @@ pyslicer model.stl output.gcode --html-preview preview.html
 
 Open the HTML file in any browser. You get a rotatable 3D view of the toolpaths
 (drag to spin, scroll to zoom), per-layer 2D drawings, and the full G-code listing.
+
+## Demo: slice #3DBenchy and open the viewer
+
+Downloads the CC0 [#3DBenchy](https://www.3dbenchy.com/) model (if needed),
+slices it, writes an HTML preview, and opens it in your default browser
+(macOS, Windows, and Linux):
+
+```bash
+python -m pyslicer.demo
+```
+
+Or, after install:
+
+```bash
+pyslicer-demo
+```
+
+Useful flags: `--no-open`, `--force-download`, `-l 0.4`, `-n 2`,
+`--write-readme-gif` (writes `docs/benchy_demo.gif` at 2×; needs Pillow).
+
+In the HTML viewer you can **Record movie** (WebM) or **Export GIF** of the simulation.
 
 ## Tests
 

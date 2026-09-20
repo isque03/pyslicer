@@ -192,6 +192,8 @@ def run(args):
                 args.output,
                 args.html_preview,
                 subtitle=f"From {args.stl}",
+                nozzle_diameter=model.nozzle_diameter,
+                layer_height=model.layerHeight,
             )
             logger.info("HTML preview wrote %s", preview_path)
 
