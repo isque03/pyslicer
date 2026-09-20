@@ -30,14 +30,6 @@ def test_open_contours_raise_instead_of_force_close(monkeypatch):
         segments.clear()
         return c
 
-    monkeypatch.setattr(
-        "pyslicer.slicing.process.find_intersecting_lines",
-        lambda facet, z: [Line.withVerticies(Vertex(0, 0, 0), Vertex(1, 0, 2))],
-    )
-    monkeypatch.setattr(
-        "pyslicer.slicing.process.get_intersecting_points",
-        lambda lines, z: [Vertex(0.5, 0, z), Vertex(0.6, 0.1, z)],
-    )
     monkeypatch.setattr("pyslicer.slicing.process.join_segments", fake_join)
 
     with pytest.raises(ValueError, match="Refusing to invent closing segments"):

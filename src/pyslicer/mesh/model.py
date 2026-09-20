@@ -45,12 +45,16 @@ class Model:
         self.edgeList = []
         # Numpy mesh cache: (N, 3, 3) float64 vertex positions
         self.facet_vertices = None
+        self.facet_zmin = None
+        self.facet_zmax = None
 
     def rebuild_facet_arrays(self):
         """Cache facet vertices as a numpy array for fast Z filtering."""
         n = len(self.facets)
         if n == 0:
             self.facet_vertices = np.empty((0, 3, 3), dtype=np.float64)
+            self.facet_zmin = np.empty((0,), dtype=np.float64)
+            self.facet_zmax = np.empty((0,), dtype=np.float64)
             return
         arr = np.empty((n, 3, 3), dtype=np.float64)
         for i, facet in enumerate(self.facets):
@@ -59,6 +63,9 @@ class Model:
                 arr[i, j, 1] = v.y
                 arr[i, j, 2] = v.z
         self.facet_vertices = arr
+        zvals = arr[:, :, 2]
+        self.facet_zmin = zvals.min(axis=1)
+        self.facet_zmax = zvals.max(axis=1)
 
     def offset(self):
         """Extrusion width from nozzle diameter and layer height."""

@@ -7,11 +7,7 @@ from multiprocessing.dummy import Pool
 from pyslicer.geometry.line import Line
 from pyslicer.mesh.layer import Layer
 from pyslicer.slicing.perimeters import make_perimeters, simplify_contours
-from pyslicer.slicing.plane import (
-    find_intersecting_lines,
-    get_intersecting_points,
-    slice_at,
-)
+from pyslicer.slicing.plane import segments_at_plane
 from pyslicer.slicing.segments import join_segments
 
 logger = logging.getLogger(__name__)
@@ -27,19 +23,8 @@ def layer_range(start, end, step):
 
 
 def process_layer(zcur, model, mintolerance=0.001):
-    facets = slice_at(model, zcur)
-    logger.debug("processLayer: found %d facets at %f ", len(facets), zcur)
-    segments_at_z = []
-
-    for facet in facets:
-        if facet.isCoplanar(zcur):
-            continue
-        lines = find_intersecting_lines(facet, zcur)
-        points = get_intersecting_points(lines, zcur)
-        if len(points) == 2:
-            segment = Line()
-            segment.verticies.extend(points)
-            segments_at_z.append(segment)
+    segments_at_z = segments_at_plane(model, zcur)
+    logger.debug("processLayer: found %d segments at %f ", len(segments_at_z), zcur)
 
     contours_from_stl = []
     segments_at_z.reverse()
