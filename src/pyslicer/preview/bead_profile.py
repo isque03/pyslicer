@@ -7,9 +7,8 @@ import math
 # Same extrusion-width heuristic as ``Model.offset()``.
 _WIDTH_FACTOR = 1.0 - (math.pi / 4.0)
 
-# When nozzle ≈ layer height the stadium is nearly circular. Circles that only
-# *touch* at one point look gappy when stacked; grow height past the layer
-# pitch so consecutive layers overlap with a visible neck in the preview.
+# Scale the whole stadium slightly so stacked layers overlap in the preview.
+# Applied uniformly so nozzle>layer flattening (flat top/bottom) is preserved.
 STACK_OVERLAP = 1.25
 
 
@@ -41,7 +40,7 @@ def bead_cross_section(
 
     Returns mm dimensions for a 2D profile in the plane perpendicular to travel:
 
-    - ``height`` — vertical extent (≥ layer height, with stack overlap)
+    - ``height`` — vertical extent (layer height × stack overlap)
     - ``width`` — full horizontal extent including side bulges
     - ``sideRadius`` — radius of each side semicircle (``height / 2``)
     - ``flatWidth`` — length of the flat top/bottom between the side arcs
@@ -50,14 +49,18 @@ def bead_cross_section(
     Raises ValueError for non-positive inputs.
     """
     layer_h = float(layer_height)
-    # Overlap consecutive layers so nearly-circular beads don't show air gaps.
-    height = layer_h * STACK_OVERLAP
+    # Physical stadium from true layer height (this is the flattening).
+    height = layer_h
     width = extrusion_width(nozzle_diameter, layer_h)
     if on_bed:
         # First layer is typically pressed flatter/wider onto the build plate
         width *= 1.06
-    # Keep a valid stadium (width >= height) after height inflation.
     width = max(width, height)
+
+    # Uniform preview scale: seal stacks without erasing width/height flattening.
+    height *= STACK_OVERLAP
+    width *= STACK_OVERLAP
+
     side_radius = height / 2.0
     flat_width = max(width - height, 0.0)
     return {

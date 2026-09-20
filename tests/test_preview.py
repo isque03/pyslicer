@@ -61,7 +61,8 @@ def test_render_html_includes_threejs_orbit_viewer():
     assert "addExtrudeSweeps" in doc
     assert "buildSweepFrames" in doc
     assert "sweepStadiumGeometry" in doc
-    assert "nozzle * 0.5" in doc or "Math.SQRT2" in doc
+    assert "nozzle * 0.5" in doc
+    assert "Math.min(halfW, halfH)" in doc
     assert "0x0072b2" in doc
     assert "0xe69f00" in doc
 

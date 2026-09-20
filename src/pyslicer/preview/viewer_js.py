@@ -279,11 +279,12 @@ function polylineFromSegments(segments) {
 function addExtrudeSweeps(polylines, color, bead, nozzleDiameter) {
   if (!polylines.length) return null;
   const profile = stadiumProfile2d(bead || { height: 0.4, width: 0.5 });
-  // Round-join ball: scales with nozzle; √2 so outer miter tips stay filled.
+  // Round-join / end-cap ball: match bead half-extent (not √2 miter tip).
   const nozzle = Math.max(Number(nozzleDiameter) || Number(bead && bead.width) || 0.5, 0.1);
   const filletR = nozzle * 0.5;
   const halfW = Math.max(filletR, (Number(bead && bead.width) || nozzle) * 0.5);
-  const joinR = halfW * Math.SQRT2;
+  const halfH = Math.max(Number(bead && bead.height) || nozzle, 0.1) * 0.5;
+  const joinR = Math.min(halfW, halfH);
   const up = new THREE.Vector3(0, 1, 0);
   const mat = new THREE.MeshStandardMaterial({
     color,
@@ -327,17 +328,14 @@ function addExtrudeSweeps(polylines, color, bead, nozzleDiameter) {
     }
     vertBase += pos.count;
 
-    // Sphere joins at corners + tips (radius ∝ nozzle). Skip near-colinear verts.
-    for (let vi = 0; vi < raw.length; vi++) {
-      if (vi > 0 && vi < raw.length - 1) {
-        const d1 = new THREE.Vector3().subVectors(raw[vi], raw[vi - 1]);
-        const d2 = new THREE.Vector3().subVectors(raw[vi + 1], raw[vi]);
-        if (d1.lengthSq() > 1e-12 && d2.lengthSq() > 1e-12) {
-          d1.normalize();
-          d2.normalize();
-          if (d1.dot(d2) > 0.998) continue; // ~colinear: no join ball
-        }
-      }
+    // Sphere joins only at turning corners (not open tips — those looked bulbous).
+    for (let vi = 1; vi < raw.length - 1; vi++) {
+      const d1 = new THREE.Vector3().subVectors(raw[vi], raw[vi - 1]);
+      const d2 = new THREE.Vector3().subVectors(raw[vi + 1], raw[vi]);
+      if (d1.lengthSq() < 1e-12 || d2.lengthSq() < 1e-12) continue;
+      d1.normalize();
+      d2.normalize();
+      if (d1.dot(d2) > 0.998) continue; // ~colinear
       const c = raw[vi];
       const v0 = vertBase;
       for (let i = 0; i < joinPos.count; i++) {

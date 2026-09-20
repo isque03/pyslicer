@@ -20,11 +20,22 @@ def test_extrusion_width_matches_model_offset():
 
 
 def test_bead_is_stadium_not_circle_when_nozzle_gt_layer():
-    bead = bead_cross_section(0.5, 0.25)
-    assert math.isclose(bead["height"], 0.25 * STACK_OVERLAP)
+    """Layer height < nozzle → flat top/bottom (flattening), not a round tube."""
+    layer = 0.25
+    nozzle = 0.5
+    bead = bead_cross_section(nozzle, layer)
+    phys_w = extrusion_width(nozzle, layer)
+    assert math.isclose(bead["height"], layer * STACK_OVERLAP)
+    assert math.isclose(bead["width"], phys_w * STACK_OVERLAP)
     assert bead["width"] > bead["height"]
+    assert bead["flatWidth"] > 0
+    # Flattening ratio matches the physical stadium (overlap is uniform).
+    assert math.isclose(
+        bead["flatWidth"] / bead["width"],
+        (phys_w - layer) / phys_w,
+        rel_tol=1e-9,
+    )
     assert math.isclose(bead["sideRadius"], bead["height"] / 2)
-    assert math.isclose(bead["flatWidth"], bead["width"] - bead["height"])
     assert bead["onBed"] is False
 
 
@@ -45,14 +56,12 @@ def test_near_circular_bead_still_stacks_without_air_gap():
     bead = bead_cross_section(0.4, layer)
     assert bead["height"] > layer
     r = bead["height"] / 2.0
-    # Chord width at the mid-plane between adjacent layer centers:
     neck = 2.0 * math.sqrt(r * r - (layer / 2.0) ** 2)
-    assert neck > layer * 0.5  # visible seal, not a vanishing point
-    assert bead["flatWidth"] >= 0.0
+    assert neck > layer * 0.5
 
 
-def test_bead_degenerates_to_circle_when_width_clamped_to_height():
-    # Large layer vs small nozzle: width clamps up to (inflated) height.
+def test_bead_degenerates_to_circle_when_width_equals_height():
+    # Large layer vs small nozzle: width clamps to layer height → circle.
     bead = bead_cross_section(0.2, 0.4)
     assert math.isclose(bead["width"], bead["height"])
     assert math.isclose(bead["flatWidth"], 0.0)
