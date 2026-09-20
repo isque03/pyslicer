@@ -7,6 +7,11 @@ import math
 # Same extrusion-width heuristic as ``Model.offset()``.
 _WIDTH_FACTOR = 1.0 - (math.pi / 4.0)
 
+# When nozzle ≈ layer height the stadium is nearly circular. Circles that only
+# *touch* at one point look gappy when stacked; grow height past the layer
+# pitch so consecutive layers overlap with a visible neck in the preview.
+STACK_OVERLAP = 1.25
+
 
 def extrusion_width(nozzle_diameter: float, layer_height: float) -> float:
     """Expected bead width (mm) from nozzle diameter and layer height."""
@@ -36,7 +41,7 @@ def bead_cross_section(
 
     Returns mm dimensions for a 2D profile in the plane perpendicular to travel:
 
-    - ``height`` — vertical extent (≈ layer height)
+    - ``height`` — vertical extent (≥ layer height, with stack overlap)
     - ``width`` — full horizontal extent including side bulges
     - ``sideRadius`` — radius of each side semicircle (``height / 2``)
     - ``flatWidth`` — length of the flat top/bottom between the side arcs
@@ -44,11 +49,15 @@ def bead_cross_section(
 
     Raises ValueError for non-positive inputs.
     """
-    height = float(layer_height)
-    width = extrusion_width(nozzle_diameter, layer_height)
+    layer_h = float(layer_height)
+    # Overlap consecutive layers so nearly-circular beads don't show air gaps.
+    height = layer_h * STACK_OVERLAP
+    width = extrusion_width(nozzle_diameter, layer_h)
     if on_bed:
         # First layer is typically pressed flatter/wider onto the build plate
         width *= 1.06
+    # Keep a valid stadium (width >= height) after height inflation.
+    width = max(width, height)
     side_radius = height / 2.0
     flat_width = max(width - height, 0.0)
     return {

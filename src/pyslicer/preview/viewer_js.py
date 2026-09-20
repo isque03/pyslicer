@@ -89,54 +89,202 @@ function addTravelLines(segments, color) {
   return { lines, geometry: geo, total: segments.length };
 }
 
-function makeStadiumBeadGeometry(bead) {
-  // Stadium / capsule cross-section (real FDM bead):
-  //   flat top  ← nozzle face
-  //   flat bottom ← bed / prior layer
-  //   semicircle left & right ← plastic bulge
-  //
-  // Shape coords: x = sideways (width), y = up (layer height).
-  // Extrude along Z (= path length), then rotate so length is local +X.
+function stadiumProfile2d(bead) {
+  // Stadium / capsule: flat top/bottom, semicircle sides (x=sideways, y=up).
   const h = Math.max(Number(bead.height) || 0.4, 0.05);
   const w = Math.max(Number(bead.width) || h, h);
   const r = h / 2;
   const halfFlat = Math.max(w - h, 0) / 2;
-  const arcSegs = 20;
-
+  const arcSegs = 12;
   const pts = [];
-  // Bottom flat (left → right)
   pts.push(new THREE.Vector2(-halfFlat, -r));
   pts.push(new THREE.Vector2(halfFlat, -r));
-  // Right semicircle (bottom → top)
   for (let i = 1; i <= arcSegs; i++) {
     const a = -Math.PI / 2 + (Math.PI * i) / arcSegs;
     pts.push(new THREE.Vector2(halfFlat + Math.cos(a) * r, Math.sin(a) * r));
   }
-  // Top flat (right → left)
   pts.push(new THREE.Vector2(-halfFlat, r));
-  // Left semicircle (top → bottom)
   for (let i = 1; i <= arcSegs; i++) {
     const a = Math.PI / 2 + (Math.PI * i) / arcSegs;
     pts.push(new THREE.Vector2(-halfFlat + Math.cos(a) * r, Math.sin(a) * r));
   }
+  return pts;
+}
 
-  const shape = new THREE.Shape(pts);
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: 1,
-    bevelEnabled: false,
-    steps: 1,
-    curveSegments: arcSegs,
-  });
-  geo.translate(0, 0, -0.5);
-  geo.rotateY(-Math.PI / 2);
+function buildSweepFrames(points, joinRadius) {
+  // CAD round joins: at each corner, rotate the sweep frame at the vertex so
+  // the outer bead edge is a circular arc of radius ≈ bead half-width centered
+  // on the G-code tip. joinRadius sets how many arc subdivisions (via angle).
+  const frames = [];
+  if (points.length < 2) return frames;
+  const push = (p, T) => {
+    const t = T.clone();
+    if (t.lengthSq() < 1e-14) t.set(1, 0, 0);
+    else t.normalize();
+    frames.push({ p: p.clone(), T: t });
+  };
+
+  const T0 = new THREE.Vector3().subVectors(points[1], points[0]);
+  push(points[0], T0);
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const A = points[i - 1];
+    const B = points[i];
+    const C = points[i + 1];
+    const d1 = new THREE.Vector3().subVectors(B, A);
+    const d2 = new THREE.Vector3().subVectors(C, B);
+    const len1 = d1.length();
+    const len2 = d2.length();
+    if (len1 < 1e-9 || len2 < 1e-9) continue;
+    d1.multiplyScalar(1 / len1);
+    d2.multiplyScalar(1 / len2);
+    const cos = Math.max(-1, Math.min(1, d1.dot(d2)));
+    const phi = Math.acos(cos);
+    if (phi < 0.02) {
+      push(B, d2);
+      continue;
+    }
+    const axis = new THREE.Vector3().crossVectors(d1, d2);
+    if (axis.lengthSq() < 1e-14) {
+      push(B, d2);
+      continue;
+    }
+    axis.normalize();
+    // Denser arc for larger turns / larger nozzles
+    const nSegs = Math.max(
+      4,
+      Math.ceil((phi / (Math.PI / 16)) * Math.max(1, joinRadius / 0.2))
+    );
+    push(B, d1);
+    for (let s = 1; s < nSegs; s++) {
+      const q = new THREE.Quaternion().setFromAxisAngle(axis, (phi * s) / nSegs);
+      push(B, d1.clone().applyQuaternion(q));
+    }
+    push(B, d2);
+  }
+
+  const Tend = new THREE.Vector3().subVectors(
+    points[points.length - 1],
+    points[points.length - 2]
+  );
+  push(points[points.length - 1], Tend);
+  return frames;
+}
+
+function sweepStadiumGeometry(frames, profile, up) {
+  // Solid stadium sweep: side wall + filled cross-sections (no hollow tube).
+  const nRings = frames.length;
+  const nProf = profile.length;
+  if (nRings < 2 || nProf < 3) return null;
+
+  // Layout: [ring0 profile | ring0 center | ring1 profile | ring1 center | ...]
+  const stride = nProf + 1;
+  const positions = new Float32Array(nRings * stride * 3);
+  const indices = [];
+  const B = new THREE.Vector3();
+  const N = new THREE.Vector3();
+  const altUp = new THREE.Vector3(1, 0, 0);
+
+  for (let i = 0; i < nRings; i++) {
+    const T = frames[i].T;
+    B.crossVectors(T, up);
+    if (B.lengthSq() < 1e-10) B.crossVectors(T, altUp);
+    B.normalize();
+    N.crossVectors(B, T).normalize();
+    if (N.dot(up) < 0) {
+      N.negate();
+      B.negate();
+    }
+    const P = frames[i].p;
+    const base = i * stride;
+    for (let j = 0; j < nProf; j++) {
+      const pr = profile[j];
+      const o = (base + j) * 3;
+      positions[o] = P.x + B.x * pr.x + N.x * pr.y;
+      positions[o + 1] = P.y + B.y * pr.x + N.y * pr.y;
+      positions[o + 2] = P.z + B.z * pr.x + N.z * pr.y;
+    }
+    const co = (base + nProf) * 3;
+    positions[co] = P.x;
+    positions[co + 1] = P.y;
+    positions[co + 2] = P.z;
+  }
+
+  // Side walls between rings
+  for (let i = 0; i < nRings - 1; i++) {
+    for (let j = 0; j < nProf; j++) {
+      const j2 = (j + 1) % nProf;
+      const a = i * stride + j;
+      const b = i * stride + j2;
+      const c = (i + 1) * stride + j;
+      const d = (i + 1) * stride + j2;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  // Solid caps: fan from ring center to profile (both ends + every ring for join solidity)
+  for (let i = 0; i < nRings; i++) {
+    const center = i * stride + nProf;
+    for (let j = 0; j < nProf; j++) {
+      const j2 = (j + 1) % nProf;
+      const a = i * stride + j;
+      const b = i * stride + j2;
+      // Alternate winding so both ends face outward-ish; DoubleSide covers the rest
+      if (i === 0) indices.push(center, b, a);
+      else indices.push(center, a, b);
+    }
+  }
+
+  const indicesPerSeg = nProf * 6; // side wall only; caps handled separately for reveal
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(indices);
   geo.computeVertexNormals();
+  geo.userData.indicesPerSeg = indicesPerSeg;
+  geo.userData.nSegs = nRings - 1;
+  geo.userData.sideIndexCount = (nRings - 1) * indicesPerSeg;
   return geo;
 }
 
-function addExtrudeBeads(segments, color, bead) {
-  if (!segments.length) return null;
-  const profile = bead || { height: 0.4, width: 0.5 };
-  const geo = makeStadiumBeadGeometry(profile);
+function polylineFromSegments(segments) {
+  // Fallback when payload lacks extrudePolylines.
+  const polys = [];
+  let pts = null;
+  let i0 = 0;
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const a = [s[0], s[1], s[2]];
+    const b = [s[3], s[4], s[5]];
+    if (!pts) {
+      pts = [a, b];
+      i0 = i;
+    } else {
+      const t = pts[pts.length - 1];
+      if (
+        Math.abs(t[0] - a[0]) < 1e-6 &&
+        Math.abs(t[1] - a[1]) < 1e-6 &&
+        Math.abs(t[2] - a[2]) < 1e-6
+      ) {
+        pts.push(b);
+      } else {
+        polys.push({ points: pts, i0, i1: i - 1 });
+        pts = [a, b];
+        i0 = i;
+      }
+    }
+  }
+  if (pts) polys.push({ points: pts, i0, i1: segments.length - 1 });
+  return polys;
+}
+
+function addExtrudeSweeps(polylines, color, bead, nozzleDiameter) {
+  if (!polylines.length) return null;
+  const profile = stadiumProfile2d(bead || { height: 0.4, width: 0.5 });
+  // Round-join ball: scales with nozzle; √2 so outer miter tips stay filled.
+  const nozzle = Math.max(Number(nozzleDiameter) || Number(bead && bead.width) || 0.5, 0.1);
+  const filletR = nozzle * 0.5;
+  const halfW = Math.max(filletR, (Number(bead && bead.width) || nozzle) * 0.5);
+  const joinR = halfW * Math.SQRT2;
+  const up = new THREE.Vector3(0, 1, 0);
   const mat = new THREE.MeshStandardMaterial({
     color,
     roughness: 0.55,
@@ -145,43 +293,94 @@ function addExtrudeBeads(segments, color, bead) {
     transparent: true,
     opacity: 1,
     depthWrite: true,
+    side: THREE.DoubleSide,
     clippingPlanes: [clipPlane],
   });
-  const mesh = new THREE.InstancedMesh(geo, mat, segments.length);
-  mesh.count = segments.length;
-  const dummy = new THREE.Object3D();
-  const xAxis = new THREE.Vector3(1, 0, 0);
-  // Slight vertical overlap so stacked flats don't show light leaks
-  const yScale = 1.02;
 
-  for (let i = 0; i < segments.length; i++) {
-    const s = segments[i];
-    const a = toThree(s[0], s[1], s[2]);
-    const b = toThree(s[3], s[4], s[5]);
-    const mid = a.clone().add(b).multiplyScalar(0.5);
-    const dir = new THREE.Vector3(b.x - a.x, 0, b.z - a.z);
-    const len = dir.length();
-    const zSpan = Math.abs(b.y - a.y);
-    if (len < 1e-8 && zSpan < 1e-8) {
-      dummy.scale.set(0, 0, 0);
-      dummy.quaternion.identity();
-    } else if (len < 1e-8) {
-      // Rare pure-Z extrude: stand the bead on end
-      dummy.position.copy(mid);
-      dummy.scale.set(Math.max(zSpan, 0.05), yScale, 1);
-      dummy.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
-    } else {
-      dummy.position.copy(mid);
-      // Scale only along path (local X). Profile Y/Z already in mm.
-      dummy.scale.set(len, yScale, 1);
-      dummy.quaternion.setFromUnitVectors(xAxis, dir.normalize());
+  // Build per-polyline sweeps, then merge into one mesh (one draw call).
+  const items = [];
+  const positions = [];
+  const indices = [];
+  let vertBase = 0;
+  let indexBase = 0;
+  let totalSegs = 0;
+  const joinSphere = new THREE.SphereGeometry(joinR, 12, 10);
+  const joinPos = joinSphere.getAttribute('position');
+  const joinIdx = joinSphere.index;
+
+  const sorted = polylines.slice().sort((a, b) => (a.i0 | 0) - (b.i0 | 0));
+  for (const poly of sorted) {
+    const raw = (poly.points || []).map((p) => toThree(p[0], p[1], p[2]));
+    if (raw.length < 2) continue;
+    const frames = buildSweepFrames(raw, filletR);
+    const geo = sweepStadiumGeometry(frames, profile, up);
+    if (!geo) continue;
+
+    const pos = geo.getAttribute('position');
+    for (let i = 0; i < pos.count; i++) {
+      positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
     }
-    dummy.updateMatrix();
-    mesh.setMatrixAt(i, dummy.matrix);
+    const idx = geo.index;
+    let indexCount = idx.count;
+    for (let i = 0; i < indexCount; i++) {
+      indices.push(idx.getX(i) + vertBase);
+    }
+    vertBase += pos.count;
+
+    // Sphere joins at corners + tips (radius ∝ nozzle). Skip near-colinear verts.
+    for (let vi = 0; vi < raw.length; vi++) {
+      if (vi > 0 && vi < raw.length - 1) {
+        const d1 = new THREE.Vector3().subVectors(raw[vi], raw[vi - 1]);
+        const d2 = new THREE.Vector3().subVectors(raw[vi + 1], raw[vi]);
+        if (d1.lengthSq() > 1e-12 && d2.lengthSq() > 1e-12) {
+          d1.normalize();
+          d2.normalize();
+          if (d1.dot(d2) > 0.998) continue; // ~colinear: no join ball
+        }
+      }
+      const c = raw[vi];
+      const v0 = vertBase;
+      for (let i = 0; i < joinPos.count; i++) {
+        positions.push(
+          joinPos.getX(i) + c.x,
+          joinPos.getY(i) + c.y,
+          joinPos.getZ(i) + c.z
+        );
+      }
+      for (let i = 0; i < joinIdx.count; i++) {
+        indices.push(joinIdx.getX(i) + v0);
+      }
+      vertBase += joinPos.count;
+      indexCount += joinIdx.count;
+    }
+
+    const i0 = poly.i0 | 0;
+    const i1 = poly.i1 | 0;
+    const nEdges = Math.max(1, i1 - i0 + 1);
+    items.push({
+      i0,
+      i1,
+      nEdges,
+      spineSegs: geo.userData.nSegs,
+      indicesPerSeg: geo.userData.indicesPerSeg,
+      indexStart: indexBase,
+      indexCount,
+    });
+    indexBase += indexCount;
+    totalSegs += nEdges;
+    geo.dispose();
   }
-  mesh.instanceMatrix.needsUpdate = true;
+  joinSphere.dispose();
+
+  if (!items.length) return null;
+
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  merged.setIndex(indices);
+  merged.computeVertexNormals();
+  const mesh = new THREE.Mesh(merged, mat);
   scene.add(mesh);
-  return { mesh, material: mat, total: segments.length };
+  return { mesh, geometry: merged, items, material: mat, total: totalSegs };
 }
 
 function makeNozzle(nozzleDiameter) {
@@ -218,13 +417,18 @@ function makeNozzle(nozzleDiameter) {
 }
 
 const travelObj = addTravelLines(data.travel || [], COLOR_TRAVEL);
-const extrudeObj = addExtrudeBeads(
-  data.extrude || [],
+const extrudePolylines =
+  data.extrudePolylines && data.extrudePolylines.length
+    ? data.extrudePolylines
+    : polylineFromSegments(data.extrude || []);
+const extrudeObj = addExtrudeSweeps(
+  extrudePolylines,
   COLOR_EXTRUDE,
   data.bead || {
     height: data.layerHeight || 0.4,
     width: data.tubeDiameter || data.nozzleDiameter || 0.5,
-  }
+  },
+  data.nozzleDiameter
 );
 const nozzle = makeNozzle(data.nozzleDiameter);
 const { zMin, zMax } = zRange([data.extrude || [], data.travel || []]);
@@ -257,7 +461,21 @@ const sim = {
 
 function setFilamentReveal(extrudeCount, travelCount) {
   if (extrudeObj) {
-    extrudeObj.mesh.count = Math.max(0, Math.min(extrudeObj.total, extrudeCount));
+    let indexCount = 0;
+    for (const item of extrudeObj.items) {
+      const edges = Math.max(0, Math.min(item.nEdges, extrudeCount - item.i0));
+      if (edges <= 0) break;
+      if (edges >= item.nEdges) {
+        indexCount = item.indexStart + item.indexCount;
+      } else {
+        const spineSegs = Math.max(
+          1,
+          Math.round((edges / item.nEdges) * item.spineSegs)
+        );
+        indexCount = item.indexStart + spineSegs * item.indicesPerSeg;
+      }
+    }
+    extrudeObj.geometry.setDrawRange(0, indexCount);
   }
   if (travelObj) {
     const n = Math.max(0, Math.min(travelObj.total, travelCount));
@@ -266,7 +484,11 @@ function setFilamentReveal(extrudeCount, travelCount) {
 }
 
 function showAllFilament() {
-  if (extrudeObj) extrudeObj.mesh.count = extrudeObj.total;
+  if (extrudeObj) {
+    let n = 0;
+    for (const item of extrudeObj.items) n += item.indexCount;
+    extrudeObj.geometry.setDrawRange(0, n);
+  }
   if (travelObj) travelObj.geometry.setDrawRange(0, travelObj.total * 2);
 }
 
@@ -373,17 +595,37 @@ function seekSimulation(timeSec) {
   if (pctLabel) pctLabel.textContent = `${Math.round(Math.max(0, Math.min(100, zPct)))}%`;
   if (zLabel) zLabel.textContent = `Z ${curZ.toFixed(2)}`;
 
-  updateSimLabels(pathPct, curZ);
+  updateSimLabels(pathPct, curZ, pos);
 }
 
-function updateSimLabels(pathPct, curZ) {
+function moveIndexAtTime(t) {
+  if (!timeline.length) return -1;
+  for (let i = 0; i < timeline.length; i++) {
+    if (t <= timeline[i].t1 + 1e-9) return i;
+  }
+  return timeline.length - 1;
+}
+
+function updateSimLabels(pathPct, curZ, pos) {
   const pctEl = document.getElementById('sim-pct');
   const zEl = document.getElementById('sim-z');
+  const moveEl = document.getElementById('sim-move');
   if (pctEl) {
     const p = pathPct != null ? pathPct : (sim.t / totalTime) * 100;
     pctEl.textContent = `${Math.round(p)}%`;
   }
   if (zEl && curZ != null) zEl.textContent = `Z ${curZ.toFixed(2)}`;
+  if (moveEl && timeline.length) {
+    const i = moveIndexAtTime(sim.t);
+    const m = timeline[i];
+    const kind = m.extrude ? 'extrude' : 'travel';
+    const xy = pos
+      ? `X${pos.x.toFixed(2)} Y${(-pos.z).toFixed(2)}`
+      : `X${m.x1.toFixed(2)} Y${m.y1.toFixed(2)}`;
+    moveEl.textContent = `Move ${i + 1}/${timeline.length} · ${kind} · ${xy}`;
+  } else if (moveEl) {
+    moveEl.textContent = 'Move —';
+  }
 }
 
 function updatePlayButtons() {
@@ -414,7 +656,38 @@ function rewindSim() {
 
 function fastForwardSim() {
   sim.mode = 'simulate';
+  pauseSim();
   seekSimulation(Math.min(totalTime, sim.t + Math.max(totalTime * 0.05, 2)));
+}
+
+function stepForwardSim() {
+  if (!timeline.length) return;
+  pauseSim();
+  sim.mode = 'simulate';
+  const i = moveIndexAtTime(sim.t);
+  const m = timeline[i];
+  // Finish current move, or advance to the end of the next move
+  if (sim.t < m.t1 - 1e-9) {
+    seekSimulation(m.t1);
+  } else if (i + 1 < timeline.length) {
+    seekSimulation(timeline[i + 1].t1);
+  }
+}
+
+function stepBackwardSim() {
+  if (!timeline.length) return;
+  pauseSim();
+  sim.mode = 'simulate';
+  const i = moveIndexAtTime(sim.t);
+  const m = timeline[i];
+  // Snap to start of this move, or previous move start
+  if (sim.t > m.t0 + 1e-9) {
+    seekSimulation(m.t0);
+  } else if (i > 0) {
+    seekSimulation(timeline[i - 1].t0);
+  } else {
+    seekSimulation(0);
+  }
 }
 
 const cutawayInput = document.getElementById('cutaway');
@@ -431,6 +704,8 @@ document.getElementById('sim-play')?.addEventListener('click', playSim);
 document.getElementById('sim-pause')?.addEventListener('click', pauseSim);
 document.getElementById('sim-rewind')?.addEventListener('click', rewindSim);
 document.getElementById('sim-ff')?.addEventListener('click', fastForwardSim);
+document.getElementById('sim-step-fwd')?.addEventListener('click', stepForwardSim);
+document.getElementById('sim-step-back')?.addEventListener('click', stepBackwardSim);
 
 document.querySelectorAll('input[name="sim-speed"]').forEach((el) => {
   el.addEventListener('change', () => {
@@ -589,6 +864,8 @@ window.PYSLICER_VIEWER = {
   playSim,
   pauseSim,
   rewindSim,
+  stepForwardSim,
+  stepBackwardSim,
   totalTime: () => totalTime,
   setSpeed: (s) => { sim.speed = s; },
   startMovieExport,

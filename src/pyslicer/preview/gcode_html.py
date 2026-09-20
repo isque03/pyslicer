@@ -358,10 +358,13 @@ def render_gcode_html(
             </div>
             <div class="sim-transport" role="group" aria-label="Playback">
               <button type="button" id="sim-rewind" title="Rewind to start">Rewind</button>
+              <button type="button" id="sim-step-back" title="Previous G-code move">Step back</button>
               <button type="button" id="sim-play" title="Play">Play</button>
               <button type="button" id="sim-pause" title="Pause">Pause</button>
-              <button type="button" id="sim-ff" title="Fast forward">Fast forward</button>
+              <button type="button" id="sim-step-fwd" title="Next G-code move">Step forward</button>
+              <button type="button" id="sim-ff" title="Jump ahead ~5%">Fast forward</button>
             </div>
+            <p class="control-meta" id="sim-move" aria-live="polite">Move —</p>
             <input id="sim-scrub" type="range" min="0" max="100" step="0.1" value="100"
               aria-label="Playback position"/>
             <div class="sim-speeds" role="radiogroup" aria-label="Playback speed">
@@ -371,7 +374,7 @@ def render_gcode_html(
               <label><input type="radio" name="sim-speed" value="2"/> 2×</label>
               <label><input type="radio" name="sim-speed" value="4"/> 4×</label>
             </div>
-            <p class="control-help">Watch the nozzle follow the G-code; filament appears as it is printed.</p>
+            <p class="control-help">Step forward/back one G-code move to verify the nozzle path (including corners).</p>
             <div class="sim-transport" role="group" aria-label="Export">
               <button type="button" id="export-movie-start" title="Record WebM movie">Record movie</button>
               <button type="button" id="export-movie-stop" title="Stop and download movie" disabled>Stop movie</button>

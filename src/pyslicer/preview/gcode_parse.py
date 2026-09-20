@@ -193,6 +193,58 @@ def infer_layer_height(moves: list[dict], layers: list[dict] | None = None) -> f
     return max(counts.items(), key=lambda kv: kv[1])[0]
 
 
+def _pts_close(a: list[float], b: list[float], eps: float = 1e-6) -> bool:
+    return (
+        abs(a[0] - b[0]) <= eps
+        and abs(a[1] - b[1]) <= eps
+        and abs(a[2] - b[2]) <= eps
+    )
+
+
+def chain_extrude_polylines(
+    moves: list[dict] | None = None,
+    *,
+    segments: list[list[float]] | None = None,
+) -> list[dict]:
+    """
+    Chain tip-connected extrude moves into polylines for CAD-style sweeps.
+
+    Each polyline is ``{"points": [[x,y,z], ...], "i0": int, "i1": int}`` where
+    ``i0``/``i1`` are inclusive indices into the chronological extrude list
+    (same order as ``extrude`` in the viewer payload). Travel / disconnected
+    tips break the chain.
+    """
+    if moves is not None:
+        segs: list[list[float]] = [
+            [m["x0"], m["y0"], m["z0"], m["x1"], m["y1"], m["z1"]]
+            for m in moves
+            if m["extrude"]
+        ]
+    elif segments is not None:
+        segs = segments
+    else:
+        return []
+
+    polylines: list[dict] = []
+    pts: list[list[float]] | None = None
+    i0 = 0
+    for i, s in enumerate(segs):
+        p0 = [float(s[0]), float(s[1]), float(s[2])]
+        p1 = [float(s[3]), float(s[4]), float(s[5])]
+        if pts is None:
+            pts = [p0, p1]
+            i0 = i
+        elif _pts_close(pts[-1], p0):
+            pts.append(p1)
+        else:
+            polylines.append({"points": pts, "i0": i0, "i1": i - 1})
+            pts = [p0, p1]
+            i0 = i
+    if pts is not None:
+        polylines.append({"points": pts, "i0": i0, "i1": len(segs) - 1})
+    return polylines
+
+
 def layers_to_toolpaths_3d(
     layers: list[dict],
     *,
@@ -217,6 +269,7 @@ def layers_to_toolpaths_3d(
         ]
         if timeline is None:
             timeline, total_time = build_timeline(moves)
+        polylines = chain_extrude_polylines(moves)
     else:
         extrude = []
         travel = []
@@ -226,6 +279,7 @@ def layers_to_toolpaths_3d(
                 extrude.append([a[0], a[1], z, b[0], b[1], z])
             for a, b in layer["travel"]:
                 travel.append([a[0], a[1], z, b[0], b[1], z])
+        polylines = chain_extrude_polylines(segments=extrude)
 
     inferred = layer_height
     if inferred is None:
@@ -239,6 +293,7 @@ def layers_to_toolpaths_3d(
 
     payload: dict = {
         "extrude": extrude,
+        "extrudePolylines": polylines,
         "travel": travel,
         "nozzleDiameter": float(nozzle_diameter),
         "layerHeight": layer_h,
