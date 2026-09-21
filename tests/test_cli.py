@@ -4,10 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from pyslicer.cli import build_arg_parser, main, run
-from pyslicer.config import apply_config_to_model, load_layered_config
+from pyslicer.cli import build_arg_parser, configure_model, main, run
 from pyslicer.gcode.parse import parse_gcode
-from pyslicer.mesh import Model
 from pyslicer.timer import Timer
 
 
@@ -59,18 +57,44 @@ def test_timer_context():
     assert t.msecs >= 0.0
 
 
+def test_partial_config_keeps_historical_defaults(tmp_path):
+    cfg = tmp_path / "temp.yaml"
+    cfg.write_text("print_temperature: 210\n")
+    args = build_arg_parser().parse_args(
+        [str(FIXTURE), str(tmp_path / "out.gcode"), "--config", str(cfg)]
+    )
+    model = configure_model(args)
+    assert model.print_temperature == 210
+    assert model.layerHeight == 0.1
+    assert model.number_perimeters == 3
+    assert model.perimeters_only is False
+    assert model.append_perimeters is False
+
+
 def test_config_cli_wins(tmp_path):
     cfg = tmp_path / "cfg.yaml"
     cfg.write_text("layer_height: 0.2\n")
     args = build_arg_parser().parse_args(
         [str(FIXTURE), str(tmp_path / "out.gcode"), "--config", str(cfg), "-l", "0.4"]
     )
-    model = Model()
-    apply_config_to_model(model, load_layered_config([cfg]))
-    from pyslicer.cli import _apply_cli_settings, _cli_override_settings
-
-    _apply_cli_settings(model, _cli_override_settings(args))
+    model = configure_model(args)
     assert model.layerHeight == 0.4
+
+
+def test_no_perimeters_only_overrides_config(tmp_path):
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("perimeters_only: true\n")
+    args = build_arg_parser().parse_args(
+        [
+            str(FIXTURE),
+            str(tmp_path / "out.gcode"),
+            "--config",
+            str(cfg),
+            "--no-perimeters-only",
+        ]
+    )
+    model = configure_model(args)
+    assert model.perimeters_only is False
 
 
 def test_config_model_only_via_cli(tmp_path):
@@ -80,12 +104,7 @@ def test_config_model_only_via_cli(tmp_path):
     args = build_arg_parser().parse_args(
         [str(FIXTURE), str(out), "--config", str(cfg), "-p"]
     )
-    # Apply the same path as run() without full slice: verify settings land
-    model = Model()
-    apply_config_to_model(model, load_layered_config([cfg]))
-    from pyslicer.cli import _apply_cli_settings, _cli_override_settings
-
-    _apply_cli_settings(model, _cli_override_settings(args))
+    model = configure_model(args)
     assert model.print_temperature == 210
     assert model.layerHeight == 2.0
     assert model.perimeters_only is True
@@ -109,3 +128,29 @@ def test_main_invalid_config_exits(tmp_path):
     with pytest.raises(SystemExit) as exc:
         main([str(FIXTURE), str(out), "--config", str(cfg)])
     assert exc.value.code == 2
+
+
+def test_main_missing_config_exits(tmp_path):
+    out = tmp_path / "out.gcode"
+    with pytest.raises(SystemExit) as exc:
+        main([str(FIXTURE), str(out), "--config", str(tmp_path / "missing.yaml")])
+    assert exc.value.code == 2
+
+
+def test_main_empty_config_list_exits(tmp_path):
+    out = tmp_path / "out.gcode"
+    with pytest.raises(SystemExit) as exc:
+        main([str(FIXTURE), str(out), "--config", ","])
+    assert exc.value.code == 2
+
+
+def test_no_config_historical_defaults(tmp_path):
+    args = build_arg_parser().parse_args(
+        [str(FIXTURE), str(tmp_path / "out.gcode")]
+    )
+    model = configure_model(args)
+    assert model.layerHeight == 0.1
+    assert model.number_perimeters == 3
+    assert model.filament_diameter == 1.75
+    assert model.perimeters_only is False
+    assert model.append_perimeters is False

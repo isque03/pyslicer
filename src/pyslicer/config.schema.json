@@ -61,22 +61,22 @@
     "infill_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "Infill print speed in mm/s (converted to Model mm/min)."
+      "description": "Infill print speed in mm/s (CLI convention; converted to Model mm/min). There is no separate mm/min YAML key for this setting."
     },
     "max_corner_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "Max speed at a sharp corner in mm/s (converted to Model mm/min)."
+      "description": "Max speed at a sharp corner in mm/s (CLI convention; converted to Model mm/min). There is no separate mm/min YAML key for this setting."
     },
     "outer_perimeter_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "Outer perimeter print speed in mm/min (Model-native units)."
+      "description": "Outer perimeter print speed in mm/min (Model-native). Mutually exclusive with outer_speed."
     },
     "inner_perimeter_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "Inner perimeter print speed in mm/min (Model-native units)."
+      "description": "Inner perimeter print speed in mm/min (Model-native). Mutually exclusive with inner_speed."
     },
     "default_print_speed": {
       "type": "number",

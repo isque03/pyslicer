@@ -56,8 +56,9 @@ pyslicer model.stl output.gcode -l 0.2 -n 2
 ### YAML config files
 
 You can put print settings in one or more YAML files and pass them with `--config`.
-Files are layered left-to-right: later files override overlapping keys and add new ones.
-Explicit CLI flags always win over config.
+Files are layered left-to-right: later files override overlapping settings and add new ones.
+Explicit CLI flags always win over config (including `--no-perimeters-only` /
+`--no-append-perimeters` to force booleans off).
 
 ```yaml
 # base.yaml
@@ -75,10 +76,13 @@ print_temperature: 205
 pyslicer model.stl out.gcode --config base.yaml,fine.yaml -l 0.15
 ```
 
-Precedence: Model defaults → config layers → CLI flags. Speeds that match CLI names
-(`outer_speed`, `inner_speed`, `infill_speed`, `max_corner_speed`) are in mm/s.
+Precedence: CLI historical defaults → config layers → CLI flags.
+Speeds that match CLI names (`outer_speed`, `inner_speed`, `infill_speed`,
+`max_corner_speed`) are in mm/s. You may instead set `outer_perimeter_speed` /
+`inner_perimeter_speed` in mm/min (not both forms for the same setting).
+`infill_speed` and `max_corner_speed` have no mm/min YAML twin—they always mean mm/s.
 Other Model print settings use Model attribute names and native units (for example
-`outer_perimeter_speed` in mm/min, `print_temperature` in °C).
+`print_temperature` in °C).
 
 Available keys and types are defined in
 [`src/pyslicer/config.schema.json`](src/pyslicer/config.schema.json)

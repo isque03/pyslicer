@@ -6,22 +6,45 @@ import sys
 from operator import attrgetter
 
 from pyslicer import clipper_ops
-from pyslicer.config import apply_config_to_model, load_layered_config, parse_config_paths
+from pyslicer.config import (
+    apply_settings_to_model,
+    canonicalize_config,
+    load_layered_config,
+    parse_config_paths,
+)
 from pyslicer.geometry.contour import Contour
 from pyslicer.infill import simple_linear_infill
 from pyslicer.mesh import Model, read_file
 from pyslicer.slicing import slice_model
 from pyslicer.timer import Timer
 
-# Applied when --config is absent so no-config CLI behavior stays unchanged.
+# Seeded for every CLI run so --config and no-config share the same baseline.
 _CLI_HISTORICAL_DEFAULTS = {
     "perimeters_only": False,
     "append_perimeters": False,
     "perimeter_overlap_percent": 1.0,
-    "num_perimeters": 3,
+    "number_perimeters": 3,
     "filament_diameter": 1.75,
-    "layer_height": 0.1,
+    "layerHeight": 0.1,
 }
+
+_CLI_SETTING_DESTS = frozenset(
+    {
+        "perimeters_only",
+        "append_perimeters",
+        "perimeter_overlap_percent",
+        "num_perimeters",
+        "filament_diameter",
+        "layer_height",
+        "outer_speed",
+        "inner_speed",
+        "infill_speed",
+        "max_corner_speed",
+        "max_accel",
+        "max_jerk",
+        "min_corner_angle",
+    }
+)
 
 
 def build_arg_parser():
@@ -40,16 +63,20 @@ def build_arg_parser():
     )
     parser.add_argument(
         "-p",
+        "--perimeters-only",
         "--perimeters_only",
+        dest="perimeters_only",
         help="Generate only perimeters, no infill.",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=argparse.SUPPRESS,
     )
     parser.add_argument(
         "-a",
+        "--append-perimeters",
         "--append_perimeters",
+        dest="append_perimeters",
         help="Include original stl perimeters with no offsetting in the output.",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=argparse.SUPPRESS,
     )
     parser.add_argument("-v", "--verbose", help="Be verbose.", action="store_true")
@@ -131,34 +158,25 @@ def build_arg_parser():
     return parser
 
 
-def _apply_cli_settings(model, settings):
-    """Apply CLI/historical setting dict onto model (speeds are mm/s)."""
-    if "perimeters_only" in settings:
-        model.perimeters_only = settings["perimeters_only"]
-    if "append_perimeters" in settings:
-        model.append_perimeters = settings["append_perimeters"]
-    if "perimeter_overlap_percent" in settings:
-        model.perimeter_overlap_percent = settings["perimeter_overlap_percent"]
-    if "num_perimeters" in settings:
-        model.number_perimeters = settings["num_perimeters"]
-    if "filament_diameter" in settings:
-        model.filament_diameter = settings["filament_diameter"]
-    if "layer_height" in settings:
-        model.layerHeight = settings["layer_height"]
-    if "outer_speed" in settings:
-        model.outer_perimeter_speed = settings["outer_speed"] * 60.0
-    if "inner_speed" in settings:
-        model.inner_perimeter_speed = settings["inner_speed"] * 60.0
-    if "infill_speed" in settings:
-        model.infill_speed = settings["infill_speed"] * 60.0
-    if "max_corner_speed" in settings:
-        model.max_corner_speed = settings["max_corner_speed"] * 60.0
-    if "max_accel" in settings:
-        model.max_accel = settings["max_accel"]
-    if "max_jerk" in settings:
-        model.max_jerk = settings["max_jerk"]
-    if "min_corner_angle" in settings:
-        model.min_corner_angle = settings["min_corner_angle"]
+def _cli_overrides_to_model_settings(args) -> dict:
+    """Map explicitly passed CLI flags to Model-native settings."""
+    raw = {k: v for k, v in vars(args).items() if k in _CLI_SETTING_DESTS}
+    if not raw:
+        return {}
+    # Dest names match YAML keys (num_perimeters, layer_height, outer_speed, …).
+    return canonicalize_config(raw)
+
+
+def configure_model(args) -> Model:
+    """Build a Model with CLI historical defaults → YAML layers → CLI overrides."""
+    model = Model()
+    apply_settings_to_model(model, _CLI_HISTORICAL_DEFAULTS)
+    config_arg = getattr(args, "config", None)
+    if config_arg:
+        paths = parse_config_paths(config_arg)
+        apply_settings_to_model(model, load_layered_config(paths))
+    apply_settings_to_model(model, _cli_overrides_to_model_settings(args))
+    return model
 
 
 def _compute_roofs_and_overhangs(layers):
@@ -192,30 +210,6 @@ def _compute_roofs_and_overhangs(layers):
                 layers[layer_num + 1].overhang.append(Contour.from_path(poly, zcur))
 
 
-def _cli_override_settings(args):
-    """Return only settings the user actually passed on the CLI."""
-    return {
-        k: v
-        for k, v in vars(args).items()
-        if k
-        in {
-            "perimeters_only",
-            "append_perimeters",
-            "perimeter_overlap_percent",
-            "num_perimeters",
-            "filament_diameter",
-            "layer_height",
-            "outer_speed",
-            "inner_speed",
-            "infill_speed",
-            "max_corner_speed",
-            "max_accel",
-            "max_jerk",
-            "min_corner_angle",
-        }
-    }
-
-
 def run(args):
     logger = logging.getLogger()
     ch = logging.StreamHandler(sys.stdout)
@@ -226,14 +220,7 @@ def run(args):
     logger.info("Reading...")
     with Timer() as total_time:
         with Timer() as read_time:
-            model = Model()
-            config_arg = getattr(args, "config", None)
-            if config_arg:
-                paths = parse_config_paths(config_arg)
-                apply_config_to_model(model, load_layered_config(paths))
-            else:
-                _apply_cli_settings(model, _CLI_HISTORICAL_DEFAULTS)
-            _apply_cli_settings(model, _cli_override_settings(args))
+            model = configure_model(args)
             read_file(args.stl, model)
         logger.info("File read took %s seconds", read_time.secs)
 
