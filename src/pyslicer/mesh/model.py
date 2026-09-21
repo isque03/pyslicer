@@ -21,9 +21,17 @@ class Model:
         self.retract_amount = 3.0
         self.retract_speed = 6200
         self.unretract_speed = 3400
-        self.default_print_speed = 4200
+        self.default_print_speed = 4200  # mm/min (G-code F); 70 mm/s
+        self.outer_perimeter_speed = 4200
+        self.inner_perimeter_speed = 4200
+        self.infill_speed = 4200
         self.default_travel_speed = 8000
         self.default_z_speed = 2400
+        # Corner planning (stored as G-code F units mm/min; CLI/UI use mm/s)
+        self.max_corner_speed = 300  # mm/min ≈ 5 mm/s at 90° (SCV)
+        self.max_accel = 1000.0  # mm/s²
+        self.max_jerk = 20.0  # mm/s corner Δv proxy
+        self.min_corner_angle = 20.0  # degrees; gentler turns uncapped by accel/jerk
         self.filament_diameter = 1.75
         self.number_perimeters = 2
         self.processing_threads = 4

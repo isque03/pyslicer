@@ -2,9 +2,20 @@
 
 import logging
 
+from pyslicer.gcode.motion import plan_contour_feeds
 from pyslicer.geometry.line import Line
 
 logger = logging.getLogger(__name__)
+
+# Emit a new F when planned feed differs by more than this (mm/min)
+_FEED_EPS = 0.5
+
+
+def print_speed_for_shell(model, shell_index: int) -> float:
+    """Outer shell (index 0) vs inner shells."""
+    if shell_index == 0:
+        return float(model.outer_perimeter_speed)
+    return float(model.inner_perimeter_speed)
 
 
 def retract(model, e, f):
@@ -21,7 +32,9 @@ def extrude(model, e, f):
     return e
 
 
-def write_segment_gcode(model, f, idx, segment, e, extrude_amount):
+def write_segment_gcode(model, f, idx, segment, e, extrude_amount, feed, last_feed=None):
+    """Write one extrusion segment. ``feed`` is mm/min. Returns (e, last_feed)."""
+    feed = float(feed)
     if idx == 0:
         e = retract(model, e, f)
         f.write(";; travel move\n")
@@ -31,17 +44,37 @@ def write_segment_gcode(model, f, idx, segment, e, extrude_amount):
         e = extrude(model, e, f)
         e += extrude_amount
         f.write(
-            f"G1 F{model.default_print_speed:.6f} "
+            f"G1 F{feed:.6f} "
             f"X{segment.verticies[1].x:.6f} Y{segment.verticies[1].y:.6f} "
             f"E{e:.6f}\n"
         )
-    else:
-        e += extrude_amount
+        return e, feed
+
+    e += extrude_amount
+    if last_feed is None or abs(feed - last_feed) > _FEED_EPS:
         f.write(
-            f"G1 X{segment.verticies[1].x:.6f} Y{segment.verticies[1].y:.6f} "
+            f"G1 F{feed:.6f} "
+            f"X{segment.verticies[1].x:.6f} Y{segment.verticies[1].y:.6f} "
             f"E{e:.6f}\n"
         )
-    return e
+        return e, feed
+    f.write(
+        f"G1 X{segment.verticies[1].x:.6f} Y{segment.verticies[1].y:.6f} "
+        f"E{e:.6f}\n"
+    )
+    return e, last_feed if last_feed is not None else feed
+
+
+def _plan_feeds(model, segments, cruise_f, closed=False):
+    return plan_contour_feeds(
+        segments,
+        cruise_f,
+        model.max_corner_speed,
+        model.max_accel,
+        max_jerk=getattr(model, "max_jerk", 20.0),
+        min_corner_angle_deg=getattr(model, "min_corner_angle", 20.0),
+        closed=closed,
+    )
 
 
 def write_gcode(model, filename):
@@ -50,6 +83,16 @@ def write_gcode(model, filename):
         f.write(f"M109 S{model.print_temperature} ; Heat up to {model.print_temperature}C\n")
         f.write("G90       ; Use absolute coordinates\n")
         f.write("G21       ; Set units to millimeters\n")
+        f.write(
+            f"; pyslicer planning: "
+            f"outer={model.outer_perimeter_speed / 60.0:.1f}mm/s "
+            f"inner={model.inner_perimeter_speed / 60.0:.1f}mm/s "
+            f"infill={model.infill_speed / 60.0:.1f}mm/s "
+            f"accel={model.max_accel:.0f}mm/s^2 "
+            f"jerk={model.max_jerk:.1f}mm/s "
+            f"corner={model.max_corner_speed / 60.0:.1f}mm/s "
+            f"min_angle={model.min_corner_angle:.0f}deg\n"
+        )
         f.write("M106 S0   ; Fan Off\n")
         f.write("G28       ; Home all axes\n")
         f.write("G92 E0    ; Zero extruder\n")
@@ -86,12 +129,29 @@ def write_gcode(model, filename):
                     f.write(
                         f";; Contour {contour_index} Area: {abs(contour.winding_area())}\n"
                     )
-                    f.write(f"G1 F{model.default_print_speed:.6f}\n")
+                    cruise = print_speed_for_shell(model, x)
+                    feeds = _plan_feeds(
+                        model,
+                        contour.segments,
+                        cruise,
+                        closed=contour.is_closed(),
+                    )
+                    last_feed = None
+                    f.write(f"G1 F{cruise:.6f}\n")
+                    last_feed = cruise
                     for idx, segment in enumerate(contour.segments):
                         volume = model.volume_extruded(segment)
                         extrude_amount = volume / pirsquared
-                        e = write_segment_gcode(
-                            model, f, idx, segment, e, extrude_amount
+                        seg_feed = feeds[idx] if idx < len(feeds) else cruise
+                        e, last_feed = write_segment_gcode(
+                            model,
+                            f,
+                            idx,
+                            segment,
+                            e,
+                            extrude_amount,
+                            seg_feed,
+                            last_feed=last_feed,
                         )
                 contour_index += 1
                 if contours_written == 0:
@@ -107,6 +167,38 @@ def write_gcode(model, filename):
                 ) from exc
             f.write(";; Infill\n")
             prev_segment = None
+            run_start = 0
+            cruise = float(model.infill_speed)
+            last_feed = None
+
+            def _flush_infill_run(start, end, e_val, last_f):
+                """Plan and write contiguous infill segments [start, end)."""
+                if start >= end:
+                    return e_val, last_f
+                run = infill[start:end]
+                feeds = _plan_feeds(model, run, cruise, closed=False)
+                lf = last_f
+                for local_i, segment in enumerate(run):
+                    volume = model.volume_extruded(segment)
+                    extrude_amount = volume / pirsquared
+                    seg_feed = feeds[local_i] if local_i < len(feeds) else cruise
+                    # After a travel we already set F; treat as continuation (idx>0)
+                    # unless this is the first extrude after travel with no prior F.
+                    e_val += extrude_amount
+                    if lf is None or abs(seg_feed - lf) > _FEED_EPS:
+                        f.write(
+                            f"G1 F{seg_feed:.6f} "
+                            f"X{segment.verticies[1].x:.6f} "
+                            f"Y{segment.verticies[1].y:.6f} E{e_val:.6f}\n"
+                        )
+                        lf = seg_feed
+                    else:
+                        f.write(
+                            f"G1 X{segment.verticies[1].x:.6f} "
+                            f"Y{segment.verticies[1].y:.6f} E{e_val:.6f}\n"
+                        )
+                return e_val, lf
+
             for idx, segment in enumerate(infill):
                 travel_move = idx == 0
                 if prev_segment is not None and (
@@ -114,6 +206,9 @@ def write_gcode(model, filename):
                 ):
                     travel_move = True
                 if travel_move:
+                    # Finish previous run before traveling
+                    e, last_feed = _flush_infill_run(run_start, idx, e, last_feed)
+                    run_start = idx
                     travel_distance = 0.0
                     if prev_segment:
                         travel_distance = Line.withVerticies(
@@ -132,15 +227,11 @@ def write_gcode(model, filename):
                     )
                     if travel_distance >= model.minimum_retract_travel:
                         e = extrude(model, e, f)
-                    f.write(f"G1 F{model.default_print_speed:.6f}\n")
-
-                volume = model.volume_extruded(segment)
-                e += volume / pirsquared
-                f.write(
-                    f"G1 X{segment.verticies[1].x:.6f} "
-                    f"Y{segment.verticies[1].y:.6f} E{e:.6f}\n"
-                )
+                    f.write(f"G1 F{cruise:.6f}\n")
+                    last_feed = cruise
                 prev_segment = segment
+
+            e, last_feed = _flush_infill_run(run_start, len(infill), e, last_feed)
 
         f.write("M107    ; Fan off\n")
         f.write(f"M104 S0 ; Heat off {model.print_temperature}C\n")

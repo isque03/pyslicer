@@ -89,6 +89,49 @@ function addTravelLines(segments, color) {
   return { lines, geometry: geo, total: segments.length };
 }
 
+function concernColor(t) {
+  // Blue → yellow → red (Wong-ish)
+  const u = Math.max(0, Math.min(1, Number(t) || 0));
+  const c = new THREE.Color();
+  if (u < 0.5) {
+    const a = new THREE.Color(0x0072b2);
+    const b = new THREE.Color(0xf0e442);
+    c.copy(a).lerp(b, u * 2);
+  } else {
+    const a = new THREE.Color(0xf0e442);
+    const b = new THREE.Color(0xd55e00);
+    c.copy(a).lerp(b, (u - 0.5) * 2);
+  }
+  return c;
+}
+
+function scoresFromConcernMetrics(metrics, thr) {
+  const feeds = metrics.feed || [];
+  const n = feeds.length;
+  const turn = metrics.turnRad || [];
+  const accel = metrics.accelRaw || [];
+  const jerk = metrics.jerkRaw || [];
+  const minA = (Math.max(Number(thr.minAngleDeg) || 0, 0) * Math.PI) / 180;
+  const maxSpeed = Math.max(Number(thr.maxSpeed) || 70, 1e-9);
+  const maxAccel = Math.max(Number(thr.maxAccel) || 1000, 1e-9);
+  const maxJerk = Math.max(Number(thr.maxJerk) || 20, 1e-9);
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    if ((turn[i] || 0) < minA) {
+      out[i] = 0;
+      continue;
+    }
+    // feeds are G-code F (mm/min); maxSpeed is mm/s
+    const speedPart = ((feeds[i] || 0) / 60) / maxSpeed;
+    const accelPart = (accel[i] || 0) / maxAccel;
+    const jerkPart = (jerk[i] || 0) / maxJerk;
+    // 0 while within thresholds; color only when limits are exceeded
+    const excess = Math.max(speedPart, accelPart, jerkPart);
+    out[i] = Math.min(1, Math.max(0, excess - 1));
+  }
+  return out;
+}
+
 function stadiumProfile2d(bead) {
   // Stadium / capsule: flat top/bottom, semicircle sides (x=sideways, y=up).
   const h = Math.max(Number(bead.height) || 0.4, 0.05);
@@ -286,8 +329,9 @@ function addExtrudeSweeps(polylines, color, bead, nozzleDiameter) {
   const halfH = Math.max(Number(bead && bead.height) || nozzle, 0.1) * 0.5;
   const joinR = Math.min(halfW, halfH);
   const up = new THREE.Vector3(0, 1, 0);
+  const pathColor = new THREE.Color(color);
   const mat = new THREE.MeshStandardMaterial({
-    color,
+    color: pathColor,
     roughness: 0.55,
     metalness: 0.02,
     flatShading: false,
@@ -296,6 +340,7 @@ function addExtrudeSweeps(polylines, color, bead, nozzleDiameter) {
     depthWrite: true,
     side: THREE.DoubleSide,
     clippingPlanes: [clipPlane],
+    vertexColors: false,
   });
 
   // Build per-polyline sweeps, then merge into one mesh (one draw call).
@@ -308,6 +353,8 @@ function addExtrudeSweeps(polylines, color, bead, nozzleDiameter) {
   const joinSphere = new THREE.SphereGeometry(joinR, 12, 10);
   const joinPos = joinSphere.getAttribute('position');
   const joinIdx = joinSphere.index;
+  const nProf = profile.length;
+  const stride = nProf + 1;
 
   const sorted = polylines.slice().sort((a, b) => (a.i0 | 0) - (b.i0 | 0));
   for (const poly of sorted) {
@@ -317,6 +364,7 @@ function addExtrudeSweeps(polylines, color, bead, nozzleDiameter) {
     const geo = sweepStadiumGeometry(frames, profile, up);
     if (!geo) continue;
 
+    const vertStart = vertBase;
     const pos = geo.getAttribute('position');
     for (let i = 0; i < pos.count; i++) {
       positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
@@ -328,6 +376,8 @@ function addExtrudeSweeps(polylines, color, bead, nozzleDiameter) {
     }
     vertBase += pos.count;
 
+    const nRings = frames.length;
+    const joins = [];
     // Sphere joins only at turning corners (not open tips — those looked bulbous).
     for (let vi = 1; vi < raw.length - 1; vi++) {
       const d1 = new THREE.Vector3().subVectors(raw[vi], raw[vi - 1]);
@@ -348,6 +398,13 @@ function addExtrudeSweeps(polylines, color, bead, nozzleDiameter) {
       for (let i = 0; i < joinIdx.count; i++) {
         indices.push(joinIdx.getX(i) + v0);
       }
+      const i0 = poly.i0 | 0;
+      joins.push({
+        vertStart: v0,
+        vertCount: joinPos.count,
+        segA: i0 + vi - 1,
+        segB: i0 + vi,
+      });
       vertBase += joinPos.count;
       indexCount += joinIdx.count;
     }
@@ -359,6 +416,11 @@ function addExtrudeSweeps(polylines, color, bead, nozzleDiameter) {
       i0,
       i1,
       nEdges,
+      vertStart,
+      nRings,
+      stride,
+      nProf,
+      joins,
       spineSegs: geo.userData.nSegs,
       indicesPerSeg: geo.userData.indicesPerSeg,
       indexStart: indexBase,
@@ -374,11 +436,26 @@ function addExtrudeSweeps(polylines, color, bead, nozzleDiameter) {
 
   const merged = new THREE.BufferGeometry();
   merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  const vertCount = positions.length / 3;
+  const colors = new Float32Array(vertCount * 3);
+  for (let i = 0; i < vertCount; i++) {
+    colors[i * 3] = pathColor.r;
+    colors[i * 3 + 1] = pathColor.g;
+    colors[i * 3 + 2] = pathColor.b;
+  }
+  merged.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   merged.setIndex(indices);
   merged.computeVertexNormals();
   const mesh = new THREE.Mesh(merged, mat);
   scene.add(mesh);
-  return { mesh, geometry: merged, items, material: mat, total: totalSegs };
+  return {
+    mesh,
+    geometry: merged,
+    items,
+    material: mat,
+    total: totalSegs,
+    pathColor,
+  };
 }
 
 function makeNozzle(nozzleDiameter) {
@@ -428,6 +505,53 @@ const extrudeObj = addExtrudeSweeps(
   },
   data.nozzleDiameter
 );
+const concernMetrics = data.concernMetrics || {
+  feed: [],
+  turnRad: [],
+  accelRaw: [],
+  jerkRaw: [],
+};
+const planningLimits = data.planningLimits || {};
+const concernThresholds = {
+  maxSpeed: Number(planningLimits.maxSpeed) || 70,
+  maxAccel: Number(planningLimits.maxAccel) || 1000,
+  maxJerk: Number(planningLimits.maxJerk) || 20,
+  minAngleDeg: Number(planningLimits.minAngleDeg) || 20,
+};
+let colorMode = 'path';
+
+function fmtNum(v, digits) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '—';
+  return digits == null ? String(n) : n.toFixed(digits);
+}
+
+function populateSliceSettings() {
+  const list = document.getElementById('slice-settings');
+  const missing = document.getElementById('slice-settings-missing');
+  if (!list) return;
+  const pl = data.planningLimits;
+  if (!pl || Object.keys(pl).length === 0) {
+    list.hidden = true;
+    if (missing) missing.hidden = false;
+    return;
+  }
+  if (missing) missing.hidden = true;
+  list.hidden = false;
+  const rows = [
+    ['Outer wall', `${fmtNum(pl.outerSpeed ?? pl.maxSpeed, 1)} mm/s`],
+    ['Inner wall', `${fmtNum(pl.innerSpeed ?? pl.maxSpeed, 1)} mm/s`],
+    ['Infill', `${fmtNum(pl.infillSpeed ?? pl.maxSpeed, 1)} mm/s`],
+    ['Max accel', `${fmtNum(pl.maxAccel, 0)} mm/s²`],
+    ['Max corner Δv', `${fmtNum(pl.maxJerk, 1)} mm/s`],
+    ['90° corner speed', `${fmtNum(pl.maxCornerSpeed, 1)} mm/s`],
+    ['Min turn angle', `${fmtNum(pl.minAngleDeg, 0)}°`],
+  ];
+  list.innerHTML = rows
+    .map(([k, v]) => `<li><span class="k">${k}</span><span class="v">${v}</span></li>`)
+    .join('');
+}
+populateSliceSettings();
 const nozzle = makeNozzle(data.nozzleDiameter);
 const { zMin, zMax } = zRange([data.extrude || [], data.travel || []]);
 
@@ -529,6 +653,108 @@ function setFilamentOpacity(pct) {
   }
   const label = document.getElementById('opacity-pct');
   if (label) label.textContent = `${Math.round(opacity * 100)}%`;
+}
+
+function paintVertexRange(colors, vertStart, vertCount, c) {
+  for (let i = 0; i < vertCount; i++) {
+    const o = (vertStart + i) * 3;
+    colors[o] = c.r;
+    colors[o + 1] = c.g;
+    colors[o + 2] = c.b;
+  }
+}
+
+function paintExtrudeConcernColors(scores) {
+  if (!extrudeObj) return;
+  const colors = extrudeObj.geometry.getAttribute('color');
+  if (!colors) return;
+  const arr = colors.array;
+  for (const item of extrudeObj.items) {
+    const nRings = item.nRings | 0;
+    const stride = item.stride | 0;
+    for (let r = 0; r < nRings; r++) {
+      const t = nRings <= 1 ? 0 : r / (nRings - 1);
+      const edge =
+        item.i0 + Math.min(item.nEdges - 1, Math.floor(t * item.nEdges + 1e-9));
+      const c = concernColor(scores[edge] || 0);
+      paintVertexRange(arr, item.vertStart + r * stride, stride, c);
+    }
+    for (const j of item.joins || []) {
+      const s = Math.max(scores[j.segA] || 0, scores[j.segB] || 0);
+      paintVertexRange(arr, j.vertStart, j.vertCount, concernColor(s));
+    }
+  }
+  colors.needsUpdate = true;
+}
+
+function readConcernThresholds() {
+  const speedEl = document.getElementById('thr-speed');
+  const accelEl = document.getElementById('thr-accel');
+  const jerkEl = document.getElementById('thr-jerk');
+  const angleEl = document.getElementById('thr-angle');
+  if (speedEl) concernThresholds.maxSpeed = Number(speedEl.value) || 70;
+  if (accelEl) concernThresholds.maxAccel = Number(accelEl.value) || 1000;
+  if (jerkEl) concernThresholds.maxJerk = Number(jerkEl.value) || 20;
+  if (angleEl) concernThresholds.minAngleDeg = Number(angleEl.value) || 0;
+  const speedVal = document.getElementById('thr-speed-val');
+  const accelVal = document.getElementById('thr-accel-val');
+  const jerkVal = document.getElementById('thr-jerk-val');
+  const angleVal = document.getElementById('thr-angle-val');
+  if (speedVal) speedVal.textContent = String(Number(concernThresholds.maxSpeed));
+  if (accelVal) accelVal.textContent = String(Math.round(concernThresholds.maxAccel));
+  if (jerkVal) jerkVal.textContent = String(Number(concernThresholds.maxJerk));
+  if (angleVal) angleVal.textContent = String(Math.round(concernThresholds.minAngleDeg));
+}
+
+function applyPlanningLimitsToSliders() {
+  const speedEl = document.getElementById('thr-speed');
+  const accelEl = document.getElementById('thr-accel');
+  const jerkEl = document.getElementById('thr-jerk');
+  const angleEl = document.getElementById('thr-angle');
+  if (speedEl) speedEl.value = String(concernThresholds.maxSpeed);
+  if (accelEl) accelEl.value = String(concernThresholds.maxAccel);
+  if (jerkEl) jerkEl.value = String(concernThresholds.maxJerk);
+  if (angleEl) angleEl.value = String(concernThresholds.minAngleDeg);
+  readConcernThresholds();
+}
+
+function refreshConcernColors() {
+  readConcernThresholds();
+  const scores = scoresFromConcernMetrics(concernMetrics, concernThresholds);
+  paintExtrudeConcernColors(scores);
+}
+
+function setColorMode(mode) {
+  colorMode = mode === 'concern' ? 'concern' : 'path';
+  const concern = colorMode === 'concern';
+  const thrPanel = document.getElementById('concern-thresholds');
+  if (thrPanel) thrPanel.hidden = !concern;
+  if (travelObj && travelObj.lines) {
+    travelObj.lines.visible = !concern;
+  }
+  if (extrudeObj && extrudeObj.mesh && extrudeObj.material) {
+    extrudeObj.mesh.visible = true;
+    const opacity = opacityInput
+      ? Math.max(0.05, Number(opacityInput.value) / 100)
+      : 1;
+    extrudeObj.material.opacity = opacity;
+    extrudeObj.material.transparent = true;
+    extrudeObj.material.depthWrite = opacity > 0.95;
+    if (concern) {
+      extrudeObj.material.vertexColors = true;
+      extrudeObj.material.color.set(0xffffff);
+      refreshConcernColors();
+    } else {
+      extrudeObj.material.vertexColors = false;
+      extrudeObj.material.color.copy(extrudeObj.pathColor);
+    }
+    extrudeObj.material.needsUpdate = true;
+  }
+  const legend = document.getElementById('concern-legend');
+  if (legend) {
+    legend.classList.toggle('visible', concern);
+    legend.setAttribute('aria-hidden', concern ? 'false' : 'true');
+  }
 }
 
 function seekSimulation(timeSec) {
@@ -697,6 +923,23 @@ if (opacityInput) {
   opacityInput.addEventListener('input', () => setFilamentOpacity(opacityInput.value));
   setFilamentOpacity(opacityInput.value);
 }
+
+document.querySelectorAll('input[name="color-mode"]').forEach((el) => {
+  el.addEventListener('change', () => {
+    if (el.checked) setColorMode(el.value);
+  });
+});
+['thr-speed', 'thr-accel', 'thr-jerk', 'thr-angle'].forEach((id) => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', () => {
+    if (colorMode === 'concern') refreshConcernColors();
+    else readConcernThresholds();
+  });
+});
+applyPlanningLimitsToSliders();
+const checkedColor = document.querySelector('input[name="color-mode"]:checked');
+setColorMode(checkedColor ? checkedColor.value : 'path');
 
 document.getElementById('sim-play')?.addEventListener('click', playSim);
 document.getElementById('sim-pause')?.addEventListener('click', pauseSim);

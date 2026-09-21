@@ -49,7 +49,7 @@ def test_absolute_e_matches_hand_calculation():
     assert math.isclose(m.volume_extruded(seg) / m.pi_r_squared(), expected, rel_tol=1e-12)
 
     buf = io.StringIO()
-    e = write_segment_gcode(m, buf, 1, seg, 0.0, expected)
+    e = write_segment_gcode(m, buf, 1, seg, 0.0, expected, feed=4200)[0]
     assert math.isclose(e, expected, abs_tol=1e-9)
     cmds = parse_gcode(buf.getvalue())
     assert len(cmds) == 1
@@ -91,7 +91,7 @@ def test_write_segment_idx0_exact_sequence():
     delta = _expected_delta_e(3.0, 0.2, 0.5, 1.75)
     buf = io.StringIO()
     e0 = 5.0
-    e = write_segment_gcode(m, buf, 0, seg, e0, delta)
+    e, last_f = write_segment_gcode(m, buf, 0, seg, e0, delta, feed=4200)
     text = buf.getvalue()
     lines = [ln for ln in text.splitlines() if ln.strip()]
     assert lines[0] == "G1 F6200.000000 E4.000000"  # retract 5→4
@@ -102,13 +102,14 @@ def test_write_segment_idx0_exact_sequence():
     final_e = float(re.search(r"E([0-9.]+)", lines[4]).group(1))
     assert math.isclose(final_e, 5.0 + delta, abs_tol=1e-6)
     assert math.isclose(e, 5.0 + delta, abs_tol=1e-9)
+    assert math.isclose(last_f, 4200.0)
 
 
 def test_write_segment_idx_gt0_extrude_only_no_travel():
     m = _model(retract_amount=1.0)
     buf = io.StringIO()
     seg = Line.withVerticies(Vertex(1, 2, 0), Vertex(4, 2, 0))
-    e = write_segment_gcode(m, buf, 1, seg, 2.0, 0.5)
+    e, _ = write_segment_gcode(m, buf, 1, seg, 2.0, 0.5, feed=4200, last_feed=4200)
     text = buf.getvalue()
     assert "travel" not in text
     assert "retract" not in text.lower() or ";;" not in text
@@ -116,3 +117,13 @@ def test_write_segment_idx_gt0_extrude_only_no_travel():
     cmds = parse_gcode(text)
     assert len(cmds) == 1
     assert math.isclose(cmds[0][1]["E"], 2.5)
+    assert "F" not in cmds[0][1]
+
+
+def test_write_segment_emits_f_when_feed_changes():
+    m = _model(retract_amount=0.0)
+    buf = io.StringIO()
+    seg = Line.withVerticies(Vertex(0, 0, 0), Vertex(1, 0, 0))
+    e, last = write_segment_gcode(m, buf, 1, seg, 0.0, 0.1, feed=1500, last_feed=4200)
+    assert math.isclose(last, 1500)
+    assert "F1500" in buf.getvalue()

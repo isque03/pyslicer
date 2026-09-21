@@ -170,3 +170,27 @@ def test_perimeter_e_accumulates_per_segment_length(tmp_path):
     delta = (length * m.layerHeight * m.nozzle_diameter) / m.pi_r_squared()
     for i, e in enumerate(e_vals):
         assert math.isclose(e, (i + 1) * delta, abs_tol=1e-5)
+
+
+def test_feature_speeds_outer_inner_infill(tmp_path):
+    m = _tiny_model(retract_amount=0.0)
+    outer = _square_contour(0.2, size=10.0)
+    inner = _square_contour(0.2, size=8.0)
+    m.layers[0].perimeters = [[outer], [inner]]
+    m.outer_perimeter_speed = 1800
+    m.inner_perimeter_speed = 3600
+    m.infill_speed = 4800
+    # Disable corner slowing so F markers stay at feature cruise
+    m.max_corner_speed = 100000
+    m.max_accel = 1e9
+
+    out = tmp_path / "out.gcode"
+    write_gcode(m, str(out))
+    text = out.read_text()
+    # Writer emits innermost shell first (index 1), then outer (index 0)
+    peri1 = text.split(";; Perimeter 1")[1].split(";; Perimeter 0")[0]
+    peri0 = text.split(";; Perimeter 0")[1].split(";; Infill")[0]
+    infill = text.split(";; Infill")[1]
+    assert "F3600.000000" in peri1
+    assert "F1800.000000" in peri0
+    assert "F4800.000000" in infill

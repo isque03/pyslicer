@@ -51,14 +51,23 @@ def render_gcode_html(
     subtitle: str | None = None,
     nozzle_diameter: float = DEFAULT_NOZZLE_DIAMETER_MM,
     layer_height: float | None = None,
+    max_accel: float | None = None,
+    planning_limits: dict | None = None,
 ) -> str:
     """Return a self-contained HTML document with 2D layers and a 3D orbit view."""
+    from pyslicer.preview.gcode_parse import parse_planning_limits_from_gcode
+
     layers, moves = parse_gcode(gcode)
+    limits = planning_limits or parse_planning_limits_from_gcode(gcode)
     paths_3d = layers_to_toolpaths_3d(
         layers,
         nozzle_diameter=nozzle_diameter,
         layer_height=layer_height,
         moves=moves,
+        max_accel=max_accel if max_accel is not None else (
+            limits.get("maxAccel") if limits else None
+        ),
+        planning_limits=limits,
     )
     paths_json = json.dumps(paths_3d, separators=(",", ":"))
 
@@ -156,6 +165,80 @@ def render_gcode_html(
     width: 1.1rem;
     height: 2px;
     background: var(--travel);
+  }}
+  .concern-legend {{
+    display: none;
+    margin-top: 0.75rem;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }}
+  .concern-legend.visible {{
+    display: flex;
+  }}
+  .concern-legend .bar {{
+    flex: 0 0 8rem;
+    height: 0.55rem;
+    background: linear-gradient(90deg, #0072b2, #f0e442, #d55e00);
+  }}
+  .color-mode {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text);
+  }}
+  .color-mode label {{
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    cursor: pointer;
+  }}
+  .color-mode input {{
+    margin: 0;
+    accent-color: var(--extrude);
+  }}
+  #concern-thresholds[hidden] {{
+    display: none !important;
+  }}
+  .thr-row {{
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }}
+  .thr-row .control-head {{
+    font-size: 0.8rem;
+  }}
+  .slice-settings {{
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.8rem;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }}
+  .slice-settings li {{
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.15rem 0;
+    border-bottom: 1px solid #ececec;
+  }}
+  .slice-settings li:last-child {{
+    border-bottom: none;
+  }}
+  .slice-settings .k {{
+    color: var(--muted);
+  }}
+  .slice-settings .v {{
+    text-align: right;
+    white-space: nowrap;
+  }}
+  .slice-settings-missing {{
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--muted);
   }}
   .viewer-block {{
     margin-bottom: 3rem;
@@ -343,6 +426,9 @@ def render_gcode_html(
         <span><i class="swatch extrude"></i>Extrude</span>
         <span><i class="swatch travel"></i>Travel</span>
       </p>
+      <p class="concern-legend" id="concern-legend" aria-hidden="true">
+        <span>Low</span><span class="bar" role="img" aria-label="Concern gradient"></span><span>High</span>
+      </p>
     </header>
 
     <section class="viewer-block" aria-label="3D toolpath view">
@@ -351,6 +437,61 @@ def render_gcode_html(
       <div class="viewer-row">
         <div id="viewer3d"></div>
         <aside class="viewer-controls" aria-label="Preview controls">
+          <div class="control">
+            <div class="control-head">
+              <span>Slice settings</span>
+            </div>
+            <ul class="slice-settings" id="slice-settings" aria-label="Limits used to generate this G-code"></ul>
+            <p class="slice-settings-missing" id="slice-settings-missing" hidden>
+              No planning comment found in this G-code.
+            </p>
+            <p class="control-help">Values used when this file was sliced (feeds planned to stay within these).</p>
+          </div>
+          <div class="control">
+            <div class="control-head">
+              <span>Color mode</span>
+            </div>
+            <div class="color-mode" role="radiogroup" aria-label="Color mode">
+              <label><input type="radio" name="color-mode" value="path" checked/> Path type</label>
+              <label><input type="radio" name="color-mode" value="concern"/> Concern</label>
+            </div>
+            <p class="control-help">Concern paints the solid bead mesh where speed, accel, or corner Δv exceed your thresholds at sharp turns. Sliders recolor only — re-slice to change G-code feeds.</p>
+          </div>
+          <div class="control" id="concern-thresholds" hidden>
+            <div class="control-head">
+              <span>Concern thresholds</span>
+            </div>
+            <div class="thr-row">
+              <div class="control-head">
+                <label for="thr-speed">Max speed</label>
+                <span class="control-meta"><span id="thr-speed-val">70</span> mm/s</span>
+              </div>
+              <input id="thr-speed" type="range" min="10" max="200" step="1" value="70"
+                aria-describedby="thr-help"/>
+            </div>
+            <div class="thr-row">
+              <div class="control-head">
+                <label for="thr-accel">Max accel</label>
+                <span class="control-meta"><span id="thr-accel-val">1000</span> mm/s²</span>
+              </div>
+              <input id="thr-accel" type="range" min="100" max="10000" step="50" value="1000"/>
+            </div>
+            <div class="thr-row">
+              <div class="control-head">
+                <label for="thr-jerk">Max corner Δv</label>
+                <span class="control-meta"><span id="thr-jerk-val">20</span> mm/s</span>
+              </div>
+              <input id="thr-jerk" type="range" min="1" max="80" step="1" value="20"/>
+            </div>
+            <div class="thr-row">
+              <div class="control-head">
+                <label for="thr-angle">Min turn angle</label>
+                <span class="control-meta"><span id="thr-angle-val">20</span>°</span>
+              </div>
+              <input id="thr-angle" type="range" min="0" max="90" step="1" value="20"/>
+            </div>
+            <p id="thr-help" class="control-help">Defaults match the limits used when this G-code was planned. At those values the mesh should stay cool if planning succeeded.</p>
+          </div>
           <div class="control">
             <div class="control-head">
               <span>Simulated print</span>
@@ -436,6 +577,8 @@ def write_gcode_preview(
     subtitle: str | None = None,
     nozzle_diameter: float = DEFAULT_NOZZLE_DIAMETER_MM,
     layer_height: float | None = None,
+    max_accel: float | None = None,
+    planning_limits: dict | None = None,
 ) -> Path:
     """Read a G-code file and write an HTML preview. Returns the HTML path."""
     gcode_path = Path(gcode_path)
@@ -447,6 +590,8 @@ def write_gcode_preview(
         subtitle=subtitle,
         nozzle_diameter=nozzle_diameter,
         layer_height=layer_height,
+        max_accel=max_accel,
+        planning_limits=planning_limits,
     )
     html_path.parent.mkdir(parents=True, exist_ok=True)
     html_path.write_text(doc, encoding="utf-8")

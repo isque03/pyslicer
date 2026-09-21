@@ -1,6 +1,7 @@
 M109 S200.0 ; Heat up to 200.0C
 G90       ; Use absolute coordinates
 G21       ; Set units to millimeters
+; pyslicer planning: outer=70.0mm/s inner=70.0mm/s infill=70.0mm/s accel=1000mm/s^2 jerk=20.0mm/s corner=5.0mm/s min_angle=20deg
 M106 S0   ; Fan Off
 G28       ; Home all axes
 G92 E0    ; Zero extruder
@@ -17,7 +18,7 @@ G1 F2400.000000 Z0.200000
 G1 F4200.000000
 ;; travel move
 G1 X0.000000 Y0.000000
-G1 F4200.000000 X10.000000 Y0.000000 E0.332601
+G1 F300.000000 X10.000000 Y0.000000 E0.332601
 G1 X10.000000 Y10.000000 E0.665203
 G1 X0.000000 Y10.000000 E0.997804
 G1 X0.000000 Y0.000000 E1.330405
@@ -25,7 +26,7 @@ G1 X0.000000 Y0.000000 E1.330405
 ;;infill travel move. distance: 0.000000 
 G1 F8000.000000 X1.000000 Y1.000000
 G1 F4200.000000
-G1 X2.000000 Y1.000000 E1.363666
+G1 F2683.281573 X2.000000 Y1.000000 E1.363666
 G1 X3.000000 Y1.000000 E1.396926
 ;; retract 
 ;;infill travel move. distance: 6.403124 

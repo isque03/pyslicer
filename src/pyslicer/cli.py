@@ -62,6 +62,48 @@ def build_arg_parser():
         default=0.1,
     )
     parser.add_argument(
+        "--outer-speed",
+        type=float,
+        default=None,
+        help="Outer perimeter print speed (mm/s).",
+    )
+    parser.add_argument(
+        "--inner-speed",
+        type=float,
+        default=None,
+        help="Inner perimeter print speed (mm/s).",
+    )
+    parser.add_argument(
+        "--infill-speed",
+        type=float,
+        default=None,
+        help="Infill print speed (mm/s).",
+    )
+    parser.add_argument(
+        "--max-corner-speed",
+        type=float,
+        default=None,
+        help="Max speed at a 90° corner (mm/s).",
+    )
+    parser.add_argument(
+        "--max-accel",
+        type=float,
+        default=None,
+        help="Max print acceleration for feed planning (mm/s²).",
+    )
+    parser.add_argument(
+        "--max-jerk",
+        type=float,
+        default=None,
+        help="Max corner speed change Δv for feed planning (mm/s).",
+    )
+    parser.add_argument(
+        "--min-corner-angle",
+        type=float,
+        default=None,
+        help="Min turn angle (deg) before accel/jerk caps apply.",
+    )
+    parser.add_argument(
         "--html-preview",
         metavar="PATH",
         help="Also write an HTML toolpath preview to this path.",
@@ -117,6 +159,20 @@ def run(args):
             model.number_perimeters = args.num_perimeters
             model.filament_diameter = args.filament_diameter
             model.layerHeight = args.layer_height
+            if args.outer_speed is not None:
+                model.outer_perimeter_speed = args.outer_speed * 60.0  # mm/s → F mm/min
+            if args.inner_speed is not None:
+                model.inner_perimeter_speed = args.inner_speed * 60.0
+            if args.infill_speed is not None:
+                model.infill_speed = args.infill_speed * 60.0
+            if args.max_corner_speed is not None:
+                model.max_corner_speed = args.max_corner_speed * 60.0
+            if args.max_accel is not None:
+                model.max_accel = args.max_accel
+            if args.max_jerk is not None:
+                model.max_jerk = args.max_jerk
+            if args.min_corner_angle is not None:
+                model.min_corner_angle = args.min_corner_angle
             read_file(args.stl, model)
         logger.info("File read took %s seconds", read_time.secs)
 
@@ -134,6 +190,9 @@ def run(args):
         with Timer() as infill_time:
             for layer_num in range(len(layers)):
                 z = layers[layer_num].z
+                if model.perimeters_only:
+                    layers[layer_num].infill = []
+                    continue
                 angle = (
                     model.infill_angle if layer_num % 2 else -model.infill_angle
                 )
@@ -194,6 +253,18 @@ def run(args):
                 subtitle=f"From {args.stl}",
                 nozzle_diameter=model.nozzle_diameter,
                 layer_height=model.layerHeight,
+                max_accel=model.max_accel,
+                planning_limits={
+                    # User-facing speeds are mm/s (G-code F is mm/min)
+                    "maxSpeed": model.outer_perimeter_speed / 60.0,
+                    "outerSpeed": model.outer_perimeter_speed / 60.0,
+                    "innerSpeed": model.inner_perimeter_speed / 60.0,
+                    "infillSpeed": model.infill_speed / 60.0,
+                    "maxAccel": model.max_accel,
+                    "maxJerk": model.max_jerk,
+                    "minAngleDeg": model.min_corner_angle,
+                    "maxCornerSpeed": model.max_corner_speed / 60.0,
+                },
             )
             logger.info("HTML preview wrote %s", preview_path)
 
