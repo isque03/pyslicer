@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pyslicer/pyslicer/schemas/config.schema.json",
+  "title": "pyslicer YAML config",
+  "description": "Print settings for pyslicer --config YAML files. All properties are optional. Unknown properties are rejected at load time. Prefer CLI-style aliases (layer_height, outer_speed, …) when both an alias and a Model attribute name exist.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "layer_height": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Slicing layer height in mm (alias for layerHeight)."
+    },
+    "layerHeight": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Slicing layer height in mm."
+    },
+    "num_perimeters": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Minimum number of perimeters (alias for number_perimeters)."
+    },
+    "number_perimeters": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Minimum number of perimeters."
+    },
+    "filament_diameter": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Filament diameter in mm."
+    },
+    "nozzle_diameter": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Nozzle diameter in mm."
+    },
+    "perimeter_overlap_percent": {
+      "type": "number",
+      "description": "Percent overlap between perimeters. Smaller values mean more overlap."
+    },
+    "perimeters_only": {
+      "type": "boolean",
+      "description": "Generate only perimeters; skip infill."
+    },
+    "append_perimeters": {
+      "type": "boolean",
+      "description": "Also include original STL perimeters with no offsetting."
+    },
+    "outer_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Outer perimeter print speed in mm/s (converted to Model outer_perimeter_speed mm/min)."
+    },
+    "inner_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Inner perimeter print speed in mm/s (converted to Model inner_perimeter_speed mm/min)."
+    },
+    "infill_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Infill print speed in mm/s (converted to Model mm/min)."
+    },
+    "max_corner_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Max speed at a sharp corner in mm/s (converted to Model mm/min)."
+    },
+    "outer_perimeter_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Outer perimeter print speed in mm/min (Model-native units)."
+    },
+    "inner_perimeter_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Inner perimeter print speed in mm/min (Model-native units)."
+    },
+    "default_print_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Default print speed in mm/min (G-code F)."
+    },
+    "default_travel_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Travel (non-extruding) speed in mm/min."
+    },
+    "default_z_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Z move speed in mm/min."
+    },
+    "max_accel": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Max print acceleration for feed planning in mm/s²."
+    },
+    "max_jerk": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Max corner speed change Δv for feed planning in mm/s."
+    },
+    "min_corner_angle": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Min turn angle in degrees before accel/jerk caps apply."
+    },
+    "retract_amount": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Retraction distance in mm."
+    },
+    "retract_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Retraction speed in mm/min."
+    },
+    "unretract_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Unretraction speed in mm/min."
+    },
+    "minimum_retract_travel": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Minimum travel distance in mm before retracting."
+    },
+    "print_temperature": {
+      "type": "number",
+      "description": "Hotend print temperature in °C."
+    },
+    "infill_density": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Infill density fraction (0–1)."
+    },
+    "infill_angle": {
+      "type": "number",
+      "description": "Infill angle in degrees."
+    },
+    "width_over_height": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Extrusion width relative to layer height."
+    },
+    "processing_threads": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of processing threads."
+    },
+    "simplification_factor": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Contour simplification factor."
+    },
+    "min_contour_area": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Minimum contour area (Clipper-scaled units)."
+    },
+    "min_extrude": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Minimum extrusion length threshold in mm."
+    }
+  }
+}

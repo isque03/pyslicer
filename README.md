@@ -53,6 +53,43 @@ Example with a thicker layer and two walls:
 pyslicer model.stl output.gcode -l 0.2 -n 2
 ```
 
+### YAML config files
+
+You can put print settings in one or more YAML files and pass them with `--config`.
+Files are layered left-to-right: later files override overlapping keys and add new ones.
+Explicit CLI flags always win over config.
+
+```yaml
+# base.yaml
+layer_height: 0.2
+num_perimeters: 3
+nozzle_diameter: 0.4
+outer_speed: 50
+
+# fine.yaml
+outer_speed: 40
+print_temperature: 205
+```
+
+```bash
+pyslicer model.stl out.gcode --config base.yaml,fine.yaml -l 0.15
+```
+
+Precedence: Model defaults → config layers → CLI flags. Speeds that match CLI names
+(`outer_speed`, `inner_speed`, `infill_speed`, `max_corner_speed`) are in mm/s.
+Other Model print settings use Model attribute names and native units (for example
+`outer_perimeter_speed` in mm/min, `print_temperature` in °C).
+
+Available keys and types are defined in
+[`src/pyslicer/config.schema.json`](src/pyslicer/config.schema.json)
+(validated automatically when you pass `--config`).
+In VS Code / yaml-language-server, point a file at the schema like this:
+
+```yaml
+# yaml-language-server: $schema=./src/pyslicer/config.schema.json
+layer_height: 0.2
+```
+
 ## Preview G-code in a browser
 
 After you have a `.gcode` file:

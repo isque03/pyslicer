@@ -2,8 +2,12 @@
 
 from pathlib import Path
 
+import pytest
+
 from pyslicer.cli import build_arg_parser, main, run
+from pyslicer.config import apply_config_to_model, load_layered_config
 from pyslicer.gcode.parse import parse_gcode
+from pyslicer.mesh import Model
 from pyslicer.timer import Timer
 
 
@@ -13,9 +17,12 @@ FIXTURE = Path(__file__).parent / "fixtures" / "cube_10mm.stl"
 def test_arg_parser_defaults():
     p = build_arg_parser()
     args = p.parse_args([str(FIXTURE), "out.gcode"])
-    assert args.layer_height == 0.1
-    assert args.num_perimeters == 3
-    assert args.filament_diameter == 1.75
+    assert not hasattr(args, "layer_height")
+    assert not hasattr(args, "num_perimeters")
+    assert not hasattr(args, "filament_diameter")
+    assert args.verbose is False
+    assert args.html_preview is None
+    assert args.config is None
 
 
 def test_cli_run_end_to_end(tmp_path):
@@ -50,3 +57,55 @@ def test_timer_context():
         pass
     assert t.secs >= 0.0
     assert t.msecs >= 0.0
+
+
+def test_config_cli_wins(tmp_path):
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("layer_height: 0.2\n")
+    args = build_arg_parser().parse_args(
+        [str(FIXTURE), str(tmp_path / "out.gcode"), "--config", str(cfg), "-l", "0.4"]
+    )
+    model = Model()
+    apply_config_to_model(model, load_layered_config([cfg]))
+    from pyslicer.cli import _apply_cli_settings, _cli_override_settings
+
+    _apply_cli_settings(model, _cli_override_settings(args))
+    assert model.layerHeight == 0.4
+
+
+def test_config_model_only_via_cli(tmp_path):
+    cfg = tmp_path / "temp.yaml"
+    cfg.write_text("print_temperature: 210\nlayer_height: 2.0\nnum_perimeters: 1\n")
+    out = tmp_path / "cube.gcode"
+    args = build_arg_parser().parse_args(
+        [str(FIXTURE), str(out), "--config", str(cfg), "-p"]
+    )
+    # Apply the same path as run() without full slice: verify settings land
+    model = Model()
+    apply_config_to_model(model, load_layered_config([cfg]))
+    from pyslicer.cli import _apply_cli_settings, _cli_override_settings
+
+    _apply_cli_settings(model, _cli_override_settings(args))
+    assert model.print_temperature == 210
+    assert model.layerHeight == 2.0
+    assert model.perimeters_only is True
+
+
+def test_run_with_config(tmp_path):
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("layer_height: 2.0\nnum_perimeters: 1\nperimeters_only: true\n")
+    out = tmp_path / "cube.gcode"
+    args = build_arg_parser().parse_args(
+        [str(FIXTURE), str(out), "--config", str(cfg)]
+    )
+    run(args)
+    assert out.exists()
+
+
+def test_main_invalid_config_exits(tmp_path):
+    cfg = tmp_path / "bad.yaml"
+    cfg.write_text("layer_height: not_a_number\n")
+    out = tmp_path / "out.gcode"
+    with pytest.raises(SystemExit) as exc:
+        main([str(FIXTURE), str(out), "--config", str(cfg)])
+    assert exc.value.code == 2

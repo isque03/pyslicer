@@ -3,15 +3,25 @@
 import argparse
 import logging
 import sys
-from datetime import datetime
 from operator import attrgetter
 
 from pyslicer import clipper_ops
+from pyslicer.config import apply_config_to_model, load_layered_config, parse_config_paths
 from pyslicer.geometry.contour import Contour
 from pyslicer.infill import simple_linear_infill
 from pyslicer.mesh import Model, read_file
 from pyslicer.slicing import slice_model
 from pyslicer.timer import Timer
+
+# Applied when --config is absent so no-config CLI behavior stays unchanged.
+_CLI_HISTORICAL_DEFAULTS = {
+    "perimeters_only": False,
+    "append_perimeters": False,
+    "perimeter_overlap_percent": 1.0,
+    "num_perimeters": 3,
+    "filament_diameter": 1.75,
+    "layer_height": 0.1,
+}
 
 
 def build_arg_parser():
@@ -21,16 +31,26 @@ def build_arg_parser():
     parser.add_argument("stl", help="STL file to be sliced.")
     parser.add_argument("output", help="Output path for generated gcode.")
     parser.add_argument(
+        "--config",
+        metavar="PATHS",
+        help=(
+            "Comma-separated YAML config files, layered left-to-right "
+            "(later files override earlier). CLI flags always win."
+        ),
+    )
+    parser.add_argument(
         "-p",
         "--perimeters_only",
         help="Generate only perimeters, no infill.",
         action="store_true",
+        default=argparse.SUPPRESS,
     )
     parser.add_argument(
         "-a",
         "--append_perimeters",
         help="Include original stl perimeters with no offsetting in the output.",
         action="store_true",
+        default=argparse.SUPPRESS,
     )
     parser.add_argument("-v", "--verbose", help="Be verbose.", action="store_true")
     parser.add_argument(
@@ -38,69 +58,69 @@ def build_arg_parser():
         "--perimeter_overlap_percent",
         help="Percent overlap between perimeters. Smaller results in more overlap.",
         type=float,
-        default=1.0,
+        default=argparse.SUPPRESS,
     )
     parser.add_argument(
         "-n",
         "--num-perimeters",
         help="Minimum number of perimeters.",
         type=int,
-        default=3,
+        default=argparse.SUPPRESS,
     )
     parser.add_argument(
         "-d",
         "--filament-diameter",
         help="Measured diameter of filament to at least two decimal places.",
         type=float,
-        default=1.75,
+        default=argparse.SUPPRESS,
     )
     parser.add_argument(
         "-l",
         "--layer-height",
         help="Slicing layer height",
         type=float,
-        default=0.1,
+        default=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--outer-speed",
         type=float,
-        default=None,
+        default=argparse.SUPPRESS,
         help="Outer perimeter print speed (mm/s).",
     )
     parser.add_argument(
         "--inner-speed",
         type=float,
-        default=None,
+        default=argparse.SUPPRESS,
         help="Inner perimeter print speed (mm/s).",
     )
     parser.add_argument(
         "--infill-speed",
         type=float,
-        default=None,
+        default=argparse.SUPPRESS,
         help="Infill print speed (mm/s).",
     )
     parser.add_argument(
         "--max-corner-speed",
         type=float,
-        default=None,
+        default=argparse.SUPPRESS,
         help="Max speed at a 90° corner (mm/s).",
     )
     parser.add_argument(
         "--max-accel",
         type=float,
-        default=None,
+        default=argparse.SUPPRESS,
         help="Max print acceleration for feed planning (mm/s²).",
     )
     parser.add_argument(
         "--max-jerk",
         type=float,
-        default=None,
+        default=argparse.SUPPRESS,
         help="Max corner speed change Δv for feed planning (mm/s).",
     )
     parser.add_argument(
         "--min-corner-angle",
         type=float,
-        default=None,
+        default=argparse.SUPPRESS,
         help="Min turn angle (deg) before accel/jerk caps apply.",
     )
     parser.add_argument(
@@ -109,6 +129,36 @@ def build_arg_parser():
         help="Also write an HTML toolpath preview to this path.",
     )
     return parser
+
+
+def _apply_cli_settings(model, settings):
+    """Apply CLI/historical setting dict onto model (speeds are mm/s)."""
+    if "perimeters_only" in settings:
+        model.perimeters_only = settings["perimeters_only"]
+    if "append_perimeters" in settings:
+        model.append_perimeters = settings["append_perimeters"]
+    if "perimeter_overlap_percent" in settings:
+        model.perimeter_overlap_percent = settings["perimeter_overlap_percent"]
+    if "num_perimeters" in settings:
+        model.number_perimeters = settings["num_perimeters"]
+    if "filament_diameter" in settings:
+        model.filament_diameter = settings["filament_diameter"]
+    if "layer_height" in settings:
+        model.layerHeight = settings["layer_height"]
+    if "outer_speed" in settings:
+        model.outer_perimeter_speed = settings["outer_speed"] * 60.0
+    if "inner_speed" in settings:
+        model.inner_perimeter_speed = settings["inner_speed"] * 60.0
+    if "infill_speed" in settings:
+        model.infill_speed = settings["infill_speed"] * 60.0
+    if "max_corner_speed" in settings:
+        model.max_corner_speed = settings["max_corner_speed"] * 60.0
+    if "max_accel" in settings:
+        model.max_accel = settings["max_accel"]
+    if "max_jerk" in settings:
+        model.max_jerk = settings["max_jerk"]
+    if "min_corner_angle" in settings:
+        model.min_corner_angle = settings["min_corner_angle"]
 
 
 def _compute_roofs_and_overhangs(layers):
@@ -142,6 +192,30 @@ def _compute_roofs_and_overhangs(layers):
                 layers[layer_num + 1].overhang.append(Contour.from_path(poly, zcur))
 
 
+def _cli_override_settings(args):
+    """Return only settings the user actually passed on the CLI."""
+    return {
+        k: v
+        for k, v in vars(args).items()
+        if k
+        in {
+            "perimeters_only",
+            "append_perimeters",
+            "perimeter_overlap_percent",
+            "num_perimeters",
+            "filament_diameter",
+            "layer_height",
+            "outer_speed",
+            "inner_speed",
+            "infill_speed",
+            "max_corner_speed",
+            "max_accel",
+            "max_jerk",
+            "min_corner_angle",
+        }
+    }
+
+
 def run(args):
     logger = logging.getLogger()
     ch = logging.StreamHandler(sys.stdout)
@@ -153,26 +227,13 @@ def run(args):
     with Timer() as total_time:
         with Timer() as read_time:
             model = Model()
-            model.perimeters_only = args.perimeters_only
-            model.append_perimeters = args.append_perimeters
-            model.perimeter_overlap_percent = args.perimeter_overlap_percent
-            model.number_perimeters = args.num_perimeters
-            model.filament_diameter = args.filament_diameter
-            model.layerHeight = args.layer_height
-            if args.outer_speed is not None:
-                model.outer_perimeter_speed = args.outer_speed * 60.0  # mm/s → F mm/min
-            if args.inner_speed is not None:
-                model.inner_perimeter_speed = args.inner_speed * 60.0
-            if args.infill_speed is not None:
-                model.infill_speed = args.infill_speed * 60.0
-            if args.max_corner_speed is not None:
-                model.max_corner_speed = args.max_corner_speed * 60.0
-            if args.max_accel is not None:
-                model.max_accel = args.max_accel
-            if args.max_jerk is not None:
-                model.max_jerk = args.max_jerk
-            if args.min_corner_angle is not None:
-                model.min_corner_angle = args.min_corner_angle
+            config_arg = getattr(args, "config", None)
+            if config_arg:
+                paths = parse_config_paths(config_arg)
+                apply_config_to_model(model, load_layered_config(paths))
+            else:
+                _apply_cli_settings(model, _CLI_HISTORICAL_DEFAULTS)
+            _apply_cli_settings(model, _cli_override_settings(args))
             read_file(args.stl, model)
         logger.info("File read took %s seconds", read_time.secs)
 
@@ -279,9 +340,14 @@ def run(args):
 
 
 def main(argv=None):
+    from pyslicer.config import ConfigError
+
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-    run(args)
+    try:
+        run(args)
+    except ConfigError as exc:
+        parser.exit(2, f"error: {exc}\n")
 
 
 if __name__ == "__main__":
