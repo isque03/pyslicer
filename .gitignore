@@ -12,3 +12,6 @@ build/
 venv/
 *.gcode
 !tests/fixtures/*.gcode
+.playwright-cli/
+samples/.playwright-cli/
+samples/qa_shots/
