@@ -2,7 +2,11 @@
 
 import logging
 
+from pyslicer.gcode.cooling import estimate_layer_feature_times, layer_speed_scales
 from pyslicer.gcode.motion import plan_contour_feeds
+from pyslicer.gcode.overhang import apply_overhang_caps, previous_layer_outer_paths
+from pyslicer.gcode.pressure import pressure_advance_gcode
+from pyslicer.gcode.seam import prepare_contour_segments, wipe_targets
 from pyslicer.geometry.line import Line
 
 logger = logging.getLogger(__name__)
@@ -12,7 +16,7 @@ _FEED_EPS = 0.5
 
 
 def print_speed_for_shell(model, shell_index: int) -> float:
-    """Outer shell (index 0) vs inner shells."""
+    """Outer shell (index 0) vs inner shells. Outer is typically slower."""
     if shell_index == 0:
         return float(model.outer_perimeter_speed)
     return float(model.inner_perimeter_speed)
@@ -77,6 +81,14 @@ def _plan_feeds(model, segments, cruise_f, closed=False):
     )
 
 
+def _write_wipe_moves(model, f, points, travel_feed):
+    if not points:
+        return
+    f.write(";; wipe\n")
+    for x, y in points:
+        f.write(f"G1 F{travel_feed:.6f} X{x:.6f} Y{y:.6f}\n")
+
+
 def write_gcode(model, filename):
     logger.info("Writing %s", filename)
     with open(filename, "w", encoding="utf-8") as f:
@@ -93,6 +105,14 @@ def write_gcode(model, filename):
             f"corner={model.max_corner_speed / 60.0:.1f}mm/s "
             f"min_angle={model.min_corner_angle:.0f}deg\n"
         )
+        pa_line = pressure_advance_gcode(model.firmware, model.pressure_advance)
+        if pa_line:
+            f.write(f"{pa_line}\n")
+        elif model.firmware != "none" and model.pressure_advance is None:
+            f.write(
+                "; pressure_advance unset; no PA/LA command emitted "
+                f"(firmware={model.firmware})\n"
+            )
         f.write("M106 S0   ; Fan Off\n")
         f.write("G28       ; Home all axes\n")
         f.write("G92 E0    ; Zero extruder\n")
@@ -105,9 +125,24 @@ def write_gcode(model, filename):
         e = 0.0000
         last_z = None
         pirsquared = model.pi_r_squared()
+        last_xy: tuple[float, float] | None = None
+        sticky_seam_xy: tuple[float, float] | None = None
+        seam_mode = model.seam_position
+        seam_gap = float(model.seam_gap)
+        wipe_dist = float(model.wipe_distance)
+        wipe_loops = bool(model.wipe_on_loops)
 
-        for layer in model.layers:
+        for layer_index, layer in enumerate(model.layers):
             f.write(f";; New Layer Z: {layer.z} \n")
+            infill_for_est = model.infillAtLayer.get(layer.z, [])
+            outer_t, inner_t, infill_t = estimate_layer_feature_times(
+                layer, model, infill_for_est
+            )
+            outer_scale, inner_scale, infill_scale = layer_speed_scales(
+                model, outer_t, inner_t, infill_t
+            )
+            prev_paths = previous_layer_outer_paths(model.layers, layer_index)
+
             contour_index = 0
             while True:
                 contours_written = 0
@@ -129,17 +164,45 @@ def write_gcode(model, filename):
                     f.write(
                         f";; Contour {contour_index} Area: {abs(contour.winding_area())}\n"
                     )
+                    sticky = sticky_seam_xy if x == 0 else None
+                    segments, seam_xy = prepare_contour_segments(
+                        contour,
+                        seam_mode,
+                        last_xy=last_xy,
+                        sticky_xy=sticky,
+                        seam_gap=seam_gap if x == 0 else 0.0,
+                    )
+                    if (
+                        x == 0
+                        and contour.is_closed()
+                        and seam_mode == "aligned"
+                        and seam_xy is not None
+                    ):
+                        sticky_seam_xy = seam_xy
+
                     cruise = print_speed_for_shell(model, x)
+                    if x == 0:
+                        cruise *= outer_scale
+                    else:
+                        cruise *= inner_scale
                     feeds = _plan_feeds(
                         model,
-                        contour.segments,
+                        segments,
                         cruise,
-                        closed=contour.is_closed(),
+                        closed=contour.is_closed() and seam_gap <= 0,
                     )
+                    if x == 0:
+                        feeds = apply_overhang_caps(
+                            segments,
+                            feeds,
+                            prev_paths,
+                            model,
+                            float(model.outer_perimeter_speed) * outer_scale,
+                        )
                     last_feed = None
                     f.write(f"G1 F{cruise:.6f}\n")
                     last_feed = cruise
-                    for idx, segment in enumerate(contour.segments):
+                    for idx, segment in enumerate(segments):
                         volume = model.volume_extruded(segment)
                         extrude_amount = volume / pirsquared
                         seg_feed = feeds[idx] if idx < len(feeds) else cruise
@@ -153,6 +216,19 @@ def write_gcode(model, filename):
                             seg_feed,
                             last_feed=last_feed,
                         )
+                        last_xy = (segment.verticies[1].x, segment.verticies[1].y)
+
+                    if contour.is_closed() and (wipe_dist > 0 or wipe_loops):
+                        targets = wipe_targets(
+                            segments,
+                            wipe_distance=wipe_dist,
+                            wipe_on_loops=wipe_loops,
+                        )
+                        _write_wipe_moves(
+                            model, f, targets, float(model.default_travel_speed)
+                        )
+                        if targets:
+                            last_xy = targets[-1]
                 contour_index += 1
                 if contours_written == 0:
                     break
@@ -168,22 +244,20 @@ def write_gcode(model, filename):
             f.write(";; Infill\n")
             prev_segment = None
             run_start = 0
-            cruise = float(model.infill_speed)
+            cruise = float(model.infill_speed) * infill_scale
             last_feed = None
 
-            def _flush_infill_run(start, end, e_val, last_f):
-                """Plan and write contiguous infill segments [start, end)."""
+            def _flush_infill_run(start, end, e_val, last_f, last_pos):
                 if start >= end:
-                    return e_val, last_f
+                    return e_val, last_f, last_pos
                 run = infill[start:end]
                 feeds = _plan_feeds(model, run, cruise, closed=False)
                 lf = last_f
+                pos = last_pos
                 for local_i, segment in enumerate(run):
                     volume = model.volume_extruded(segment)
                     extrude_amount = volume / pirsquared
                     seg_feed = feeds[local_i] if local_i < len(feeds) else cruise
-                    # After a travel we already set F; treat as continuation (idx>0)
-                    # unless this is the first extrude after travel with no prior F.
                     e_val += extrude_amount
                     if lf is None or abs(seg_feed - lf) > _FEED_EPS:
                         f.write(
@@ -197,7 +271,8 @@ def write_gcode(model, filename):
                             f"G1 X{segment.verticies[1].x:.6f} "
                             f"Y{segment.verticies[1].y:.6f} E{e_val:.6f}\n"
                         )
-                return e_val, lf
+                    pos = (segment.verticies[1].x, segment.verticies[1].y)
+                return e_val, lf, pos
 
             for idx, segment in enumerate(infill):
                 travel_move = idx == 0
@@ -206,8 +281,9 @@ def write_gcode(model, filename):
                 ):
                     travel_move = True
                 if travel_move:
-                    # Finish previous run before traveling
-                    e, last_feed = _flush_infill_run(run_start, idx, e, last_feed)
+                    e, last_feed, last_xy = _flush_infill_run(
+                        run_start, idx, e, last_feed, last_xy
+                    )
                     run_start = idx
                     travel_distance = 0.0
                     if prev_segment:
@@ -225,15 +301,18 @@ def write_gcode(model, filename):
                         f"X{segment.verticies[0].x:.6f} "
                         f"Y{segment.verticies[0].y:.6f}\n"
                     )
+                    last_xy = (segment.verticies[0].x, segment.verticies[0].y)
                     if travel_distance >= model.minimum_retract_travel:
                         e = extrude(model, e, f)
                     f.write(f"G1 F{cruise:.6f}\n")
                     last_feed = cruise
                 prev_segment = segment
 
-            e, last_feed = _flush_infill_run(run_start, len(infill), e, last_feed)
+            e, last_feed, last_xy = _flush_infill_run(
+                run_start, len(infill), e, last_feed, last_xy
+            )
 
-        f.write("M107    ; Fan off\n")
+        f.write("M106 S0 ; Fan off\n")
         f.write(f"M104 S0 ; Heat off {model.print_temperature}C\n")
         f.write("M140 S0 ; Bed heat off\n")
         f.write("G91     ; Relative\n")

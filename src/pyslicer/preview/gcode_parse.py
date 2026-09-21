@@ -280,7 +280,8 @@ def corner_concern_metrics(moves: list[dict]) -> dict:
     """Per-extrude-segment junction metrics for interactive concern coloring.
 
     For each extrude segment, records the worst connected junction:
-    - ``feed``: mm/min (segment feed)
+    - ``feed``: mm/min modal G-code F for that extrude segment (from ``G1 F`` /
+      carry-forward), never from planning-comment outer/inner/infill speeds.
     - ``turnRad``: max turn angle at either endpoint (0 = straight)
     - ``accelRaw``: ``v² · (1 - cos θ)`` with ``v`` in mm/s (centripetal proxy)
     - ``jerkRaw``: ``v · 2 · sin(θ/2)`` in mm/s (instantaneous Δv proxy)

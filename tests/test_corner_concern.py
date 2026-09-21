@@ -133,3 +133,34 @@ def test_parse_planning_limits_from_gcode_comment():
     assert lim["maxJerk"] == 20.0
     assert lim["maxCornerSpeed"] == 5.0
     assert lim["minAngleDeg"] == 20.0
+
+
+def test_speed_metrics_follow_gcode_f_not_planning_comment():
+    """Speed coloring must use modal G1 F, even if the planning comment lies."""
+    from pyslicer.preview.gcode_parse import (
+        layers_to_toolpaths_3d,
+        parse_gcode,
+        parse_planning_limits_from_gcode,
+    )
+
+    gcode = """; pyslicer planning: outer=50.0mm/s inner=80.0mm/s infill=70.0mm/s accel=1000mm/s^2 jerk=20.0mm/s corner=5.0mm/s min_angle=20deg
+G90
+;; New Layer Z: 0.2
+G1 F2400 Z0.2
+G1 F1800 X0 Y0
+G1 F1800 X10 Y0 E1.0
+G1 F4800 X10 Y10 E2.0
+G1 F1200 X0 Y10 E3.0
+"""
+    layers, moves = parse_gcode(gcode)
+    limits = parse_planning_limits_from_gcode(gcode)
+    assert limits["outerSpeed"] == 50.0  # comment claims 50 mm/s = 3000 mm/min
+    payload = layers_to_toolpaths_3d(
+        layers, moves=moves, planning_limits=limits, max_accel=1e9
+    )
+    feeds = payload["concernMetrics"]["feed"]
+    # Extrude segments carry the G1 F that was modal when each moved — not 3000.
+    assert feeds == [1800.0, 4800.0, 1200.0]
+    # Planning limits must not rewrite the feed array used for Speed mode.
+    assert all(f != 3000.0 for f in feeds)
+    assert payload["planningLimits"]["outerSpeed"] == 50.0

@@ -90,7 +90,7 @@ function addTravelLines(segments, color) {
 }
 
 function concernColor(t) {
-  // Blue → yellow → red (Wong-ish)
+  // Blue → yellow → red (Wong-ish); used for concern excess and absolute speed
   const u = Math.max(0, Math.min(1, Number(t) || 0));
   const c = new THREE.Color();
   if (u < 0.5) {
@@ -103,6 +103,35 @@ function concernColor(t) {
     c.copy(a).lerp(b, (u - 0.5) * 2);
   }
   return c;
+}
+
+function feedSpeedScores(metrics) {
+  // Scores from concernMetrics.feed only — those are modal G-code F (mm/min)
+  // parsed from each G1, not planningLimits / slice settings.
+  const feeds = metrics.feed || [];
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i < feeds.length; i++) {
+    const s = (feeds[i] || 0) / 60;
+    if (s < lo) lo = s;
+    if (s > hi) hi = s;
+  }
+  if (!isFinite(lo) || !isFinite(hi)) {
+    return { scores: [], loMmS: 0, hiMmS: 0 };
+  }
+  if (hi - lo < 1e-6) {
+    return {
+      scores: feeds.map(() => 0.5),
+      loMmS: lo,
+      hiMmS: hi,
+    };
+  }
+  const span = hi - lo;
+  return {
+    scores: feeds.map((f) => (((f || 0) / 60) - lo) / span),
+    loMmS: lo,
+    hiMmS: hi,
+  };
 }
 
 function scoresFromConcernMetrics(metrics, thr) {
@@ -724,13 +753,25 @@ function refreshConcernColors() {
   paintExtrudeConcernColors(scores);
 }
 
+function refreshSpeedColors() {
+  const { scores, loMmS, hiMmS } = feedSpeedScores(concernMetrics);
+  paintExtrudeConcernColors(scores);
+  const loEl = document.getElementById('speed-legend-lo');
+  const hiEl = document.getElementById('speed-legend-hi');
+  if (loEl) loEl.textContent = `${loMmS.toFixed(0)} mm/s`;
+  if (hiEl) hiEl.textContent = `${hiMmS.toFixed(0)} mm/s`;
+}
+
 function setColorMode(mode) {
-  colorMode = mode === 'concern' ? 'concern' : 'path';
+  if (mode === 'concern') colorMode = 'concern';
+  else if (mode === 'speed') colorMode = 'speed';
+  else colorMode = 'path';
   const concern = colorMode === 'concern';
+  const speed = colorMode === 'speed';
   const thrPanel = document.getElementById('concern-thresholds');
   if (thrPanel) thrPanel.hidden = !concern;
   if (travelObj && travelObj.lines) {
-    travelObj.lines.visible = !concern;
+    travelObj.lines.visible = !(concern || speed);
   }
   if (extrudeObj && extrudeObj.mesh && extrudeObj.material) {
     extrudeObj.mesh.visible = true;
@@ -740,10 +781,11 @@ function setColorMode(mode) {
     extrudeObj.material.opacity = opacity;
     extrudeObj.material.transparent = true;
     extrudeObj.material.depthWrite = opacity > 0.95;
-    if (concern) {
+    if (concern || speed) {
       extrudeObj.material.vertexColors = true;
       extrudeObj.material.color.set(0xffffff);
-      refreshConcernColors();
+      if (concern) refreshConcernColors();
+      else refreshSpeedColors();
     } else {
       extrudeObj.material.vertexColors = false;
       extrudeObj.material.color.copy(extrudeObj.pathColor);
@@ -754,6 +796,11 @@ function setColorMode(mode) {
   if (legend) {
     legend.classList.toggle('visible', concern);
     legend.setAttribute('aria-hidden', concern ? 'false' : 'true');
+  }
+  const speedLegend = document.getElementById('speed-legend');
+  if (speedLegend) {
+    speedLegend.classList.toggle('visible', speed);
+    speedLegend.setAttribute('aria-hidden', speed ? 'false' : 'true');
   }
 }
 

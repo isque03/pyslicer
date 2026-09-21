@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=../src/pyslicer/config.schema.json
+# Showcase config: exaggerate speed contrast for the HTML Speed color mode.
+# Open the preview → Color mode → Speed (blue=slow, red=fast).
+
+layer_height: 0.3
+num_perimeters: 3
+nozzle_diameter: 0.4
+filament_diameter: 1.75
+perimeters_only: false
+append_perimeters: false
+
+# Outer much slower than inner — biggest visible surface win
+outer_speed: 30
+inner_speed: 90
+infill_speed: 110
+
+# Let cruises reach target so Speed mode shows feature contrast (not only corners)
+max_corner_speed: 25
+max_accel: 3000
+max_jerk: 40
+min_corner_angle: 25
+
+# Overhangs on bow / cabin eaves → cooler colors
+enable_dynamic_overhang_speeds: true
+overhang_speed_0: 15
+overhang_speed_25: 25
+overhang_speed_50: 45
+overhang_speed_75: 70
+
+# Short layers (smokestack, antenna): slow inner/infill, keep outer cruise
+min_layer_time: 12
+slow_down_min_speed: 10
+dont_slow_down_outer_wall: true
+
+# Seam / wipe (visible in Path mode; Speed still follows G1 F)
+seam_position: rear
+seam_gap: 0.2
+wipe_distance: 0.5
+wipe_on_loops: true
+retract_amount: 0.8
+minimum_retract_travel: 2.0
+
+# Optional PA line in header (Klipper); Speed coloring ignores this
+firmware: klipper
+pressure_advance: 0.05
+
+print_temperature: 205

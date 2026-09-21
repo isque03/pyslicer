@@ -166,6 +166,77 @@
       "type": "number",
       "minimum": 0,
       "description": "Minimum extrusion length threshold in mm."
+    },
+    "firmware": {
+      "type": "string",
+      "enum": ["none", "klipper", "marlin", "rrf"],
+      "description": "Firmware dialect for optional pressure-advance start G-code. none emits nothing."
+    },
+    "pressure_advance": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Pressure/linear advance value in firmware-native units. Emitted only when firmware is not none."
+    },
+    "enable_dynamic_overhang_speeds": {
+      "type": "boolean",
+      "description": "Slow perimeters based on unsupported overlap with the previous layer."
+    },
+    "overhang_speed_0": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Speed as percent of outer cruise at 0% overlap (full overhang)."
+    },
+    "overhang_speed_25": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Speed as percent of outer cruise at 25% overlap."
+    },
+    "overhang_speed_50": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Speed as percent of outer cruise at 50% overlap."
+    },
+    "overhang_speed_75": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Speed as percent of outer cruise at 75% overlap."
+    },
+    "min_layer_time": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Minimum layer print time in seconds; 0 disables cooling slowdown."
+    },
+    "slow_down_min_speed": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Floor speed in mm/s when slowing for min layer time or overhangs (converted to mm/min)."
+    },
+    "dont_slow_down_outer_wall": {
+      "type": "boolean",
+      "description": "When enforcing min_layer_time, prefer slowing inner walls and infill over outer walls."
+    },
+    "seam_position": {
+      "type": "string",
+      "enum": ["aligned", "nearest", "rear", "none"],
+      "description": "Where to place the Z-seam on closed perimeters."
+    },
+    "wipe_distance": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Wipe length in mm along the path after a perimeter; 0 disables."
+    },
+    "wipe_on_loops": {
+      "type": "boolean",
+      "description": "After a closed loop, tuck the nozzle slightly inward before traveling."
+    },
+    "seam_gap": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Shorten closed perimeter loops by this many mm at the seam."
     }
   }
 }

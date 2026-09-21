@@ -66,8 +66,12 @@ def test_render_html_includes_threejs_orbit_viewer():
     assert "0x0072b2" in doc
     assert "0xe69f00" in doc
     assert "paintExtrudeConcernColors" in doc
+    assert "feedSpeedScores" in doc
+    assert "refreshSpeedColors" in doc
     assert 'name="color-mode"' in doc
+    assert 'value="speed"' in doc
     assert "concern-legend" in doc
+    assert 'id="speed-legend"' in doc
     assert 'id="thr-speed"' in doc
     assert 'id="thr-accel"' in doc
     assert 'id="thr-jerk"' in doc

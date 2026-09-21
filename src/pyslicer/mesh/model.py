@@ -22,8 +22,9 @@ class Model:
         self.retract_speed = 6200
         self.unretract_speed = 3400
         self.default_print_speed = 4200  # mm/min (G-code F); 70 mm/s
-        self.outer_perimeter_speed = 4200
-        self.inner_perimeter_speed = 4200
+        # Outer slower than inner for surface quality (50 / 80 mm/s).
+        self.outer_perimeter_speed = 3000
+        self.inner_perimeter_speed = 4800
         self.infill_speed = 4200
         self.default_travel_speed = 8000
         self.default_z_speed = 2400
@@ -46,6 +47,21 @@ class Model:
         self.simplification_factor = 4.0
         self.min_contour_area = 50000.00
         self.min_extrude = 1.25 * self.nozzle_diameter
+        # Print quality (YAML / Model-native)
+        self.firmware = "none"
+        self.pressure_advance = None
+        self.enable_dynamic_overhang_speeds = False
+        self.overhang_speed_0 = 15.0
+        self.overhang_speed_25 = 25.0
+        self.overhang_speed_50 = 50.0
+        self.overhang_speed_75 = 75.0
+        self.min_layer_time = 0.0
+        self.slow_down_min_speed = 600.0  # mm/min; YAML slow_down_min_speed is mm/s
+        self.dont_slow_down_outer_wall = True
+        self.seam_position = "aligned"
+        self.wipe_distance = 0.0
+        self.wipe_on_loops = False
+        self.seam_gap = 0.0
         self.contours = []
         self.vertices = []
         self.edges = {}

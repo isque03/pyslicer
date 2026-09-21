@@ -18,6 +18,7 @@ _SPEED_MM_S_TO_ATTR = {
     "inner_speed": "inner_perimeter_speed",
     "infill_speed": "infill_speed",
     "max_corner_speed": "max_corner_speed",
+    "slow_down_min_speed": "slow_down_min_speed",
 }
 
 # Model-native mm/min speed keys that share an attribute with an mm/s alias.
@@ -74,6 +75,20 @@ _MODEL_SETTING_KEYS = frozenset(
         "simplification_factor",
         "min_contour_area",
         "min_extrude",
+        "firmware",
+        "pressure_advance",
+        "enable_dynamic_overhang_speeds",
+        "overhang_speed_0",
+        "overhang_speed_25",
+        "overhang_speed_50",
+        "overhang_speed_75",
+        "min_layer_time",
+        "slow_down_min_speed",
+        "dont_slow_down_outer_wall",
+        "seam_position",
+        "wipe_distance",
+        "wipe_on_loops",
+        "seam_gap",
     }
 )
 
@@ -120,12 +135,13 @@ def canonicalize_config(
 ) -> dict[str, Any]:
     """Map YAML keys to Model attributes with Model-native units.
 
-    CLI-style speed keys (outer_speed, inner_speed, infill_speed, max_corner_speed)
-    are mm/s and converted to mm/min. outer_perimeter_speed / inner_perimeter_speed
-    are already mm/min. Dual keys that target the same attribute raise ConfigError.
+    CLI-style speed keys (outer_speed, inner_speed, infill_speed, max_corner_speed,
+    slow_down_min_speed) are mm/s and converted to mm/min.
+    outer_perimeter_speed / inner_perimeter_speed are already mm/min.
+    Dual keys that target the same attribute raise ConfigError.
 
-    Note: YAML has no separate mm/min twin for infill_speed / max_corner_speed;
-    those keys always mean mm/s (matching the CLI flags).
+    Note: YAML has no separate mm/min twin for infill_speed / max_corner_speed /
+    slow_down_min_speed; those keys always mean mm/s (matching the CLI flags).
     """
     where = f" in {source}" if source is not None else ""
     for group in _MUTUAL_EXCLUSION_GROUPS:

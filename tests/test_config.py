@@ -149,3 +149,57 @@ def test_canonicalize_outer_speed():
     assert canonicalize_config({"outer_speed": 50}) == {
         "outer_perimeter_speed": 3000.0
     }
+
+
+def test_quality_config_round_trip(tmp_path):
+    cfg = tmp_path / "quality.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "outer_speed: 50",
+                "inner_speed: 80",
+                "firmware: klipper",
+                "pressure_advance: 0.05",
+                "seam_position: aligned",
+                "wipe_distance: 0.4",
+                "wipe_on_loops: true",
+                "seam_gap: 0.1",
+                "enable_dynamic_overhang_speeds: true",
+                "overhang_speed_0: 15",
+                "overhang_speed_25: 25",
+                "overhang_speed_50: 50",
+                "overhang_speed_75: 75",
+                "min_layer_time: 8",
+                "slow_down_min_speed: 10",
+                "dont_slow_down_outer_wall: true",
+                "retract_amount: 0.8",
+            ]
+        )
+        + "\n"
+    )
+    merged = load_layered_config([cfg])
+    model = Model()
+    apply_settings_to_model(model, merged)
+    assert model.outer_perimeter_speed == 3000.0
+    assert model.inner_perimeter_speed == 4800.0
+    assert model.firmware == "klipper"
+    assert model.pressure_advance == 0.05
+    assert model.seam_position == "aligned"
+    assert model.wipe_distance == 0.4
+    assert model.wipe_on_loops is True
+    assert model.enable_dynamic_overhang_speeds is True
+    assert model.min_layer_time == 8
+    assert model.slow_down_min_speed == 600.0  # 10 mm/s → mm/min
+    assert model.dont_slow_down_outer_wall is True
+
+
+def test_firmware_enum_rejected(tmp_path):
+    bad = tmp_path / "bad_fw.yaml"
+    bad.write_text("firmware: smoothie\n")
+    with pytest.raises(ConfigError, match="firmware"):
+        load_layered_config([bad])
+
+
+def test_model_default_outer_slower_than_inner():
+    m = Model()
+    assert m.outer_perimeter_speed < m.inner_perimeter_speed

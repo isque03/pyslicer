@@ -37,6 +37,18 @@ def _tiny_model(with_infill=True, retract_amount=1.0, min_retract=3.0):
     m.nozzle_diameter = 0.4
     m.filament_diameter = 1.75
     m.minimum_retract_travel = min_retract
+    # Pin speeds / seam for golden fixture stability (Model defaults differ).
+    m.outer_perimeter_speed = 4200
+    m.inner_perimeter_speed = 4200
+    m.infill_speed = 4200
+    m.seam_position = "none"
+    m.min_layer_time = 0.0
+    m.enable_dynamic_overhang_speeds = False
+    m.wipe_distance = 0.0
+    m.wipe_on_loops = False
+    m.seam_gap = 0.0
+    m.firmware = "none"
+    m.pressure_advance = None
 
     layer = Layer()
     layer.z = 0.2
@@ -99,7 +111,7 @@ def test_e_monotonic_except_retracts(tmp_path):
     m = _tiny_model()
     out = tmp_path / "out.gcode"
     write_gcode(m, str(out))
-    body = out.read_text().split("M107")[0]
+    body = out.read_text().split("M106 S0 ; Fan off")[0]
     last_e = None
     for cmd, params in parse_gcode(body):
         if "E" not in params:

@@ -84,6 +84,33 @@ Speeds that match CLI names (`outer_speed`, `inner_speed`, `infill_speed`,
 Other Model print settings use Model attribute names and native units (for example
 `print_temperature` in °C).
 
+### Print quality settings
+
+Defaults bias **outer walls slower than inner** (50 vs 80 mm/s) for surface finish.
+Recover print time on inner walls and infill; keep the outer/inner gap modest if
+pressure advance is not tuned (large flow drops can blob at the seam).
+
+| Key | Role |
+|-----|------|
+| `firmware` | `none` / `klipper` / `marlin` / `rrf` — dialect for optional PA emit |
+| `pressure_advance` | Firmware-native PA/LA value; emitted only when `firmware` ≠ `none` |
+| `seam_position` | `aligned` / `nearest` / `rear` / `none` |
+| `wipe_distance` / `wipe_on_loops` / `seam_gap` | Seam cleanup (portable `G1` moves) |
+| `enable_dynamic_overhang_speeds` | Overlap % vs previous layer → lower `F` |
+| `overhang_speed_0`…`_75` | Percent of outer cruise at 0/25/50/75% overlap |
+| `min_layer_time` | Seconds; `0` disables cooling slowdown |
+| `dont_slow_down_outer_wall` | Prefer slowing inner/infill (default true) |
+| `slow_down_min_speed` | Floor in mm/s for cooling/overhang slowdowns |
+
+Pressure advance is machine-side and **not** portable across firmwares:
+
+- Klipper: `SET_PRESSURE_ADVANCE ADVANCE=…`
+- Marlin: `M900 K…` (requires `LIN_ADVANCE` in the firmware build)
+- RRF: `M572 D0 S…`
+
+Values are not interchangeable. Default `firmware: none` emits nothing.
+Do not use slicer coasting / “advanced pressure” hacks with Klipper.
+
 Available keys and types are defined in
 [`src/pyslicer/config.schema.json`](src/pyslicer/config.schema.json)
 (validated automatically when you pass `--config`).
@@ -92,6 +119,8 @@ In VS Code / yaml-language-server, point a file at the schema like this:
 ```yaml
 # yaml-language-server: $schema=./src/pyslicer/config.schema.json
 layer_height: 0.2
+outer_speed: 50
+inner_speed: 80
 ```
 
 ## Preview G-code in a browser

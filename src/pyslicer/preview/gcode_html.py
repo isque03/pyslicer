@@ -429,6 +429,9 @@ def render_gcode_html(
       <p class="concern-legend" id="concern-legend" aria-hidden="true">
         <span>Low</span><span class="bar" role="img" aria-label="Concern gradient"></span><span>High</span>
       </p>
+      <p class="concern-legend" id="speed-legend" aria-hidden="true">
+        <span id="speed-legend-lo">Slow</span><span class="bar" role="img" aria-label="Speed gradient"></span><span id="speed-legend-hi">Fast</span>
+      </p>
     </header>
 
     <section class="viewer-block" aria-label="3D toolpath view">
@@ -453,9 +456,10 @@ def render_gcode_html(
             </div>
             <div class="color-mode" role="radiogroup" aria-label="Color mode">
               <label><input type="radio" name="color-mode" value="path" checked/> Path type</label>
+              <label><input type="radio" name="color-mode" value="speed"/> Speed</label>
               <label><input type="radio" name="color-mode" value="concern"/> Concern</label>
             </div>
-            <p class="control-help">Concern paints the solid bead mesh where speed, accel, or corner Δv exceed your thresholds at sharp turns. Sliders recolor only — re-slice to change G-code feeds.</p>
+            <p class="control-help">Speed colors each extrusion from the modal G-code <code>F</code> on that move (same state machine as the printer)—not from Slice settings. Lie in the planning comment and Speed still follows the real <code>G1 F…</code> values. Concern highlights only where speed, accel, or corner Δv exceed thresholds at sharp turns.</p>
           </div>
           <div class="control" id="concern-thresholds" hidden>
             <div class="control-head">
