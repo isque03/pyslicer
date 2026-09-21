@@ -1,0 +1,2 @@
+Armadillo model from https://github.com/alecjacobson/common-3d-test-models
+Original Stanford / AIM@SHAPE scanning repository lineage; check upstream license.
