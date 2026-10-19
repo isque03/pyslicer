@@ -13,6 +13,7 @@ from pyslicer.geometry.math_utils import Math
 logger = logging.getLogger(__name__)
 
 _CLOSE_EPS = 0.1  # max squared-distance for a head/tail stitch
+_CLOSURE_EPS = 1e-8  # squared distance at which the tip counts as back at the start
 _CLOSE_DIST = sqrt(_CLOSE_EPS)
 # Cell size so ±2 Moore neighborhood covers the stitch ball (2D; Z is planar).
 _GRID = _CLOSE_DIST / 2.0
@@ -110,7 +111,17 @@ def join_segments(segments):
     tipx, tipy, tipz = tx[0], ty[0], tz[0]
     used_tail_keys = {(round(tipx, 7), round(tipy, 7), round(tipz, 7))}
 
+    startx, starty, startz = hx[0], hy[0], hz[0]
+
     while True:
+        # A loop that has returned to its own start is finished. Continuing
+        # would let a neighbouring loop within the stitch radius be spliced in.
+        dx = tipx - startx
+        dy = tipy - starty
+        dz = tipz - startz
+        if len(contour.segments) > 1 and dx * dx + dy * dy + dz * dz <= _CLOSURE_EPS:
+            break
+
         kx, ky = _qkey2(tipx, tipy)
         best_d = _CLOSE_EPS + 1.0
         best_i = -1
