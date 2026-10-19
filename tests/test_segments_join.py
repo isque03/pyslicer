@@ -61,3 +61,31 @@ def test_find_closest_prefers_head_within_eps():
     candidates = [_seg(1.01, 0, 2, 0), _seg(5, 5, 6, 6)]
     closest = find_closest_segment(tip, candidates)
     assert closest is candidates[0]
+
+
+def _square(lo, hi):
+    return [
+        _seg(lo, lo, hi, lo),
+        _seg(hi, lo, hi, hi),
+        _seg(hi, hi, lo, hi),
+        _seg(lo, hi, lo, lo),
+    ]
+
+
+def test_join_stops_at_closure_when_other_loop_is_within_stitch_radius():
+    # Two concentric loops 0.05 mm apart are inside the stitch radius of each
+    # other. A closed loop must not absorb the neighbouring loop's segments.
+    outer = _square(0.0, 10.0)
+    inner = _square(0.05, 9.95)
+    segments = outer + inner
+    contour = join_segments(segments)
+    assert contour is not None
+    assert contour.is_closed()
+    assert len(contour.segments) == 4
+    assert all(s in outer for s in contour.segments)
+    assert len(segments) == 4
+
+    second = join_segments(segments)
+    assert second.is_closed()
+    assert len(second.segments) == 4
+    assert segments == []
