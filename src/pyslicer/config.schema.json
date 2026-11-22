@@ -9,35 +9,43 @@
     "layer_height": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 1000,
       "description": "Slicing layer height in mm (alias for layerHeight)."
     },
     "layerHeight": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 1000,
       "description": "Slicing layer height in mm."
     },
     "num_perimeters": {
       "type": "integer",
       "minimum": 0,
+      "maximum": 64,
       "description": "Minimum number of perimeters (alias for number_perimeters)."
     },
     "number_perimeters": {
       "type": "integer",
       "minimum": 0,
+      "maximum": 64,
       "description": "Minimum number of perimeters."
     },
     "filament_diameter": {
       "type": "number",
-      "exclusiveMinimum": 0,
+      "minimum": 0.01,
+      "maximum": 1000,
       "description": "Filament diameter in mm."
     },
     "nozzle_diameter": {
       "type": "number",
-      "exclusiveMinimum": 0,
+      "minimum": 0.001,
+      "maximum": 1000,
       "description": "Nozzle diameter in mm."
     },
     "perimeter_overlap_percent": {
       "type": "number",
+      "minimum": 0,
+      "maximum": 100,
       "description": "Percent overlap between perimeters. Smaller values mean more overlap."
     },
     "perimeters_only": {
@@ -51,76 +59,91 @@
     "outer_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 1000000,
       "description": "Outer perimeter print speed in mm/s (converted to Model outer_perimeter_speed mm/min)."
     },
     "inner_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 1000000,
       "description": "Inner perimeter print speed in mm/s (converted to Model inner_perimeter_speed mm/min)."
     },
     "infill_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 1000000,
       "description": "Infill print speed in mm/s (CLI convention; converted to Model mm/min). There is no separate mm/min YAML key for this setting."
     },
     "max_corner_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 1000000,
       "description": "Max speed at a sharp corner in mm/s (CLI convention; converted to Model mm/min). There is no separate mm/min YAML key for this setting."
     },
     "outer_perimeter_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 60000000,
       "description": "Outer perimeter print speed in mm/min (Model-native). Mutually exclusive with outer_speed."
     },
     "inner_perimeter_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 60000000,
       "description": "Inner perimeter print speed in mm/min (Model-native). Mutually exclusive with inner_speed."
     },
     "default_print_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 60000000,
       "description": "Default print speed in mm/min (G-code F)."
     },
     "default_travel_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 60000000,
       "description": "Travel (non-extruding) speed in mm/min."
     },
     "default_z_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 60000000,
       "description": "Z move speed in mm/min."
     },
     "max_accel": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 1000000000,
       "description": "Max print acceleration for feed planning in mm/s²."
     },
     "max_jerk": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 1000000,
       "description": "Max corner speed change Δv for feed planning in mm/s."
     },
     "min_corner_angle": {
       "type": "number",
       "minimum": 0,
+      "maximum": 180,
       "description": "Min turn angle in degrees before accel/jerk caps apply."
     },
     "retract_amount": {
       "type": "number",
       "minimum": 0,
+      "maximum": 1000,
       "description": "Retraction distance in mm."
     },
     "retract_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 60000000,
       "description": "Retraction speed in mm/min."
     },
     "unretract_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 60000000,
       "description": "Unretraction speed in mm/min."
     },
     "minimum_retract_travel": {
@@ -130,6 +153,8 @@
     },
     "print_temperature": {
       "type": "number",
+      "minimum": 0,
+      "maximum": 1000,
       "description": "Hotend print temperature in °C."
     },
     "infill_density": {
@@ -150,6 +175,7 @@
     "processing_threads": {
       "type": "integer",
       "minimum": 1,
+      "maximum": 32,
       "description": "Number of processing threads."
     },
     "simplification_factor": {
@@ -213,6 +239,7 @@
     "slow_down_min_speed": {
       "type": "number",
       "exclusiveMinimum": 0,
+      "maximum": 1000000,
       "description": "Floor speed in mm/s when slowing for min layer time or overhangs (converted to mm/min)."
     },
     "dont_slow_down_outer_wall": {

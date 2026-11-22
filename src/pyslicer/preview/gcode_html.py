@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import html
 import json
+from io import StringIO
 from pathlib import Path
 
+from pyslicer.limits import MAX_PREVIEW_BYTES, read_text_input, require_distinct_paths
 from pyslicer.preview.gcode_parse import (
     DEFAULT_NOZZLE_DIAMETER_MM,
     layers_to_toolpaths_3d,
@@ -69,7 +71,7 @@ def render_gcode_html(
         ),
         planning_limits=limits,
     )
-    paths_json = json.dumps(paths_3d, separators=(",", ":"))
+    paths_json = json.dumps(paths_3d, separators=(",", ":"), allow_nan=False).replace("<", "\\u003c")
 
     minx, maxx, miny, maxy = _bounds(layers)
     pad = 1.0
@@ -99,8 +101,9 @@ def render_gcode_html(
         )
 
     if not subtitle:
+        line_count = sum(1 for _ in StringIO(gcode, newline=None))
         subtitle = (
-            f"{drawn} layers with toolpaths · {len(gcode.splitlines())} lines of G-code"
+            f"{drawn} layers with toolpaths · {line_count} lines of G-code"
         )
 
     return f"""<!DOCTYPE html>
@@ -587,7 +590,8 @@ def write_gcode_preview(
     """Read a G-code file and write an HTML preview. Returns the HTML path."""
     gcode_path = Path(gcode_path)
     html_path = Path(html_path)
-    text = gcode_path.read_text(encoding="utf-8")
+    require_distinct_paths(gcode_path, html_path)
+    text = read_text_input(gcode_path, MAX_PREVIEW_BYTES, "G-code preview input")
     doc = render_gcode_html(
         text,
         title=title or f"pyslicer — {gcode_path.name}",

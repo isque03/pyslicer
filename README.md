@@ -17,7 +17,7 @@ It reads the model, cuts it into layers, and generates walls, infill, and a brow
 python -m pip install pyslicer
 ```
 
-The `demo` extra adds GIF rendering support. Install it with `python -m pip install "pyslicer[demo]"`.
+The `demo` extra adds Python-based GIF rendering on Python 3.11 or newer. Install it with `python -m pip install "pyslicer[demo]"`. Slicing and HTML previews work on Python 3.10 without Pillow.
 
 ## Use it
 
@@ -155,9 +155,13 @@ pyslicer-demo
 ```
 
 Useful flags: `--no-open`, `--force-download`, `-l 0.4`, `-n 2`,
-`--write-readme-gif` (writes `docs/benchy_demo.gif` at 2×; needs Pillow).
+`--write-readme-gif` (writes `docs/benchy_demo.gif` at 2×; needs Python 3.11 or newer and Pillow 13.0.0 or newer).
 
 In the HTML viewer you can **Record movie** (WebM) or **Export GIF** of the simulation.
+
+## Processing customer files
+
+See [Hosted slicing and previews](https://github.com/isque03/pyslicer/blob/master/docs/HOSTED_FILES.md) for local input limits and how to run PySlicer in an isolated worker.
 
 ## Tests
 

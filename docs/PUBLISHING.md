@@ -19,7 +19,7 @@ The publish job uses GitHub's OIDC identity. You do not need a PyPI API token in
 
 ## Build and publish
 
-Build runs on pull requests and pushes to `master`. It tests Python 3.10 and 3.14 on Linux and macOS, checks package metadata, and installs both built distributions in fresh environments on both operating systems. The installed CLI smoke test loads a YAML profile and generates G-code and an HTML preview from a cube. CI retains the `pyslicer-distributions` artifact for 30 days.
+Build runs on pull requests and pushes to `master`. It tests Python 3.10 and 3.14 on Linux and macOS, checks package metadata, and installs both built distributions in fresh environments on both operating systems. The installed CLI smoke test loads a YAML profile and generates G-code and an HTML preview from a cube. The **Build passed** check requires every job in this workflow to succeed before a pull request can merge. CI retains the `pyslicer-distributions` artifact for 30 days.
 
 For a stable release, set `[project].version` in `pyproject.toml`, merge the release changes, and identify the successful **push** Build for that exact commit. The following examples use `0.2.0` and a clean checkout of `master`. The package verification command requires Python 3.11 or later.
 

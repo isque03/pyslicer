@@ -1,6 +1,7 @@
 """Linear infill generation (numpy-accelerated ray–segment hits)."""
 
 import logging
+import math
 
 import numpy as np
 
@@ -8,6 +9,7 @@ from pyslicer.geometry.intersection import Intersection
 from pyslicer.geometry.line import Line
 from pyslicer.geometry.math_utils import Math
 from pyslicer.geometry.vertex import Vertex
+from pyslicer.limits import InputError, MAX_INFILL_CHECKS, MAX_INFILL_ROWS
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +98,15 @@ def next_intersection(intersection, intersection_row):
     return answer
 
 
+def _check_infill_work(contours, y1, y2, spacing):
+    if not math.isfinite(spacing) or spacing <= 0 or y1 + spacing <= y1:
+        raise InputError("Infill spacing must be finite and advance the toolpath")
+    rows = (y2 - y1) / spacing + 1
+    segments = sum(len(contour.segments) for contour in contours)
+    if not math.isfinite(rows) or rows > MAX_INFILL_ROWS or rows * segments > MAX_INFILL_CHECKS:
+        raise InputError("Infill exceeds the row or intersection work limit")
+
+
 def simple_linear_infill(
     contours, z, spacing=2.0, min_extrude=1.0, angle=45.0, name="unnamed"
 ):
@@ -107,12 +118,18 @@ def simple_linear_infill(
     p1 = bounding.pointOnLine(2.0)
     x1, y1 = p0.x, p0.y
     x2, y2 = p1.x, p1.y
+    _check_infill_work(contours, y1, y2, spacing)
     segs, meta = _segment_arrays(contours)
     intersection_rows = []
     row_count = 0
     cur_y = float(y1)
 
     while cur_y <= y2:
+        next_y = cur_y + spacing
+        if next_y <= cur_y:
+            raise InputError("Infill spacing is too small to advance the toolpath")
+        if row_count >= MAX_INFILL_ROWS or (row_count + 1) * len(segs) > MAX_INFILL_CHECKS:
+            raise InputError("Infill exceeds the row or intersection work limit")
         v1 = Vertex(x1, cur_y, z)
         v2 = Vertex(x2, cur_y, z)
         l = Line.withVerticies(v1, v2)
@@ -152,7 +169,7 @@ def simple_linear_infill(
             intersection_rows.append([])
         else:
             intersection_rows.append(intersections)
-        cur_y += spacing
+        cur_y = next_y
 
     keep_going = True
     i = 0
