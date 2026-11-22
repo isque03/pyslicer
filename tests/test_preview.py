@@ -1,5 +1,6 @@
 """Tests for G-code HTML preview generation."""
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -250,6 +251,7 @@ def test_render_html_includes_simulated_print_controls():
     assert "startMovieExport" in doc
 
 
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Pillow 13 requires Python 3.11")
 def test_write_simulation_gif(tmp_path):
     from pyslicer.preview.render_anim import write_simulation_gif
 

@@ -11,6 +11,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
+from pyslicer.limits import MAX_PREVIEW_BYTES, read_text_input, require_distinct_paths
+
 BENCHY_URL = (
     "https://raw.githubusercontent.com/CreativeTools/3DBenchy/"
     "master/Single-part/3DBenchy.stl"
@@ -127,7 +129,8 @@ def write_readme_gif(
     from pyslicer.preview.gcode_html import parse_toolpath_moves
     from pyslicer.preview.render_anim import write_simulation_gif
 
-    text = gcode_path.read_text(encoding="utf-8")
+    require_distinct_paths(gcode_path, gif_path)
+    text = read_text_input(gcode_path, MAX_PREVIEW_BYTES, "G-code preview input")
     moves = parse_toolpath_moves(text)
     print(f"Rendering README GIF ({len(moves)} moves, {speed}×) → {gif_path}")
     return write_simulation_gif(
@@ -192,7 +195,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Also write a 2× simulation GIF (default path: docs/benchy_demo.gif). "
-            "Requires Pillow."
+            "Requires Python 3.11 or newer and the pyslicer[demo] extra."
         ),
     )
     return p
@@ -200,6 +203,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
+    if args.write_readme_gif is not None:
+        from pyslicer.preview.render_anim import require_gif_support
+
+        try:
+            require_gif_support()
+        except ImportError as exc:
+            print(exc, file=sys.stderr)
+            return 1
     samples = args.samples_dir or default_samples_dir()
     samples = samples.expanduser().resolve()
 
@@ -242,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             write_readme_gif(gcode, gif_path, speed=2.0, max_sim_seconds=24.0)
             print(f"Wrote {gif_path}")
-        except ImportError as exc:
+        except (ImportError, OSError, ValueError) as exc:
             print(exc, file=sys.stderr)
             return 1
 

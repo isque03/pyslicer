@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyslicer"
-version = "0.2.0"
+version = "0.2.1"
 description = "A RepRap STL slicer and GCode generator"
 readme = "README.md"
 license = "MIT"
@@ -34,10 +34,10 @@ dev = [
     "pytest>=7.0",
     "coverage>=7.0",
     "pytest-cov>=4.0",
-    "pillow>=10.0",
+    "pillow>=13.0.0; python_version >= '3.11'",
 ]
 demo = [
-    "pillow>=10.0",
+    "pillow>=13.0.0; python_version >= '3.11'",
 ]
 
 [project.scripts]

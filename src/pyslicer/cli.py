@@ -11,9 +11,12 @@ from pyslicer.config import (
     canonicalize_config,
     load_layered_config,
     parse_config_paths,
+    validate_config,
+    validate_model_settings,
 )
 from pyslicer.geometry.contour import Contour
 from pyslicer.infill import simple_linear_infill
+from pyslicer.limits import require_distinct_paths
 from pyslicer.mesh import Model, read_file
 from pyslicer.slicing import slice_model
 from pyslicer.timer import Timer
@@ -161,9 +164,8 @@ def build_arg_parser():
 def _cli_overrides_to_model_settings(args) -> dict:
     """Map explicitly passed CLI flags to Model-native settings."""
     raw = {k: v for k, v in vars(args).items() if k in _CLI_SETTING_DESTS}
-    if not raw:
-        return {}
     # Dest names match YAML keys (num_perimeters, layer_height, outer_speed, …).
+    validate_config(raw, source="CLI flags")
     return canonicalize_config(raw)
 
 
@@ -176,6 +178,7 @@ def configure_model(args) -> Model:
         paths = parse_config_paths(config_arg)
         apply_settings_to_model(model, load_layered_config(paths))
     apply_settings_to_model(model, _cli_overrides_to_model_settings(args))
+    validate_model_settings(model)
     return model
 
 
@@ -210,7 +213,20 @@ def _compute_roofs_and_overhangs(layers):
                 layers[layer_num + 1].overhang.append(Contour.from_path(poly, zcur))
 
 
+def _check_output_paths(args):
+    outputs = [args.output]
+    if args.html_preview:
+        outputs.append(args.html_preview)
+    require_distinct_paths(args.stl, *outputs)
+    config_arg = getattr(args, "config", None)
+    if config_arg:
+        for path in parse_config_paths(config_arg):
+            require_distinct_paths(path, *outputs)
+
+
 def run(args):
+    _check_output_paths(args)
+    model = configure_model(args)
     logger = logging.getLogger()
     ch = logging.StreamHandler(sys.stdout)
     logger.addHandler(ch)
@@ -220,7 +236,6 @@ def run(args):
     logger.info("Reading...")
     with Timer() as total_time:
         with Timer() as read_time:
-            model = configure_model(args)
             read_file(args.stl, model)
         logger.info("File read took %s seconds", read_time.secs)
 
@@ -327,13 +342,11 @@ def run(args):
 
 
 def main(argv=None):
-    from pyslicer.config import ConfigError
-
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     try:
         run(args)
-    except ConfigError as exc:
+    except (OSError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")
 
 

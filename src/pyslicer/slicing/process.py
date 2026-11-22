@@ -1,10 +1,13 @@
 """Layer processing and multithreaded slice orchestration."""
 
 import logging
+import math
 from functools import partial
 from multiprocessing.dummy import Pool
 
+from pyslicer.config import validate_model_settings
 from pyslicer.geometry.line import Line
+from pyslicer.limits import InputError, MAX_FACET_LAYERS, MAX_FACETS, MAX_LAYERS
 from pyslicer.mesh.layer import Layer
 from pyslicer.slicing.perimeters import make_perimeters, simplify_contours
 from pyslicer.slicing.plane import segments_at_plane
@@ -14,12 +17,24 @@ logger = logging.getLogger(__name__)
 
 
 def layer_range(start, end, step):
-    while start < end:
-        yield start
-        start += step
+    if not all(math.isfinite(value) for value in (start, end, step)) or step <= 0:
+        raise InputError("Layer height must be positive and finite, with finite Z bounds")
     if start > end:
-        start = end
-    yield start
+        raise InputError("Layer Z bounds must be ordered")
+    if (end - start) / step > MAX_LAYERS - 1:
+        raise InputError(f"Slicing exceeds the {MAX_LAYERS:,}-layer limit")
+
+    layers = 0
+    while start < end:
+        if layers == MAX_LAYERS - 1:
+            raise InputError(f"Slicing exceeds the {MAX_LAYERS:,}-layer limit")
+        yield start
+        next_z = start + step
+        if next_z <= start:
+            raise InputError("Layer height is too small to advance Z")
+        start = next_z
+        layers += 1
+    yield end
 
 
 def process_layer(zcur, model, mintolerance=0.001):
@@ -70,6 +85,13 @@ def process_layer_print_exceptions(zcur, model, mintolerance=0.001):
 
 
 def slice_model(model):
+    validate_model_settings(model)
+    if len(model.facets) > MAX_FACETS:
+        raise InputError(f"STL exceeds the {MAX_FACETS:,}-facet limit")
+    levels = list(layer_range(model.zmin, model.zmax, model.layerHeight))
+    if len(model.facets) * len(levels) > MAX_FACET_LAYERS:
+        raise InputError(f"Slicing exceeds the {MAX_FACET_LAYERS:,} facet-layer work limit")
+
     logger.info(
         "slicing %s %f %f %f",
         model.name,
@@ -77,14 +99,9 @@ def slice_model(model):
         model.zmax,
         model.layerHeight,
     )
-    pool = Pool(model.processing_threads)
     partial_process = partial(process_layer_print_exceptions, model=model)
-    results = pool.map(
-        partial_process, layer_range(model.zmin, model.zmax, model.layerHeight)
-    )
-    pool.close()
-    pool.join()
-    return results
+    with Pool(model.processing_threads) as pool:
+        return pool.map(partial_process, levels)
 
 
 # Back-compat

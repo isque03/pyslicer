@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
@@ -10,6 +11,8 @@ from typing import Any, Mapping
 
 import yaml
 from jsonschema import Draft202012Validator
+
+from pyslicer.limits import InputError, MAX_CONFIG_BYTES, MAX_CONFIG_FILES, read_text_input
 
 # CLI-facing mm/s keys → Model attribute (stored as mm/min).
 # Values are converted (*60) during canonicalize; merged dict is Model-native.
@@ -95,6 +98,7 @@ _MODEL_SETTING_KEYS = frozenset(
 _ALLOWED_YAML_KEYS = (
     _MODEL_SETTING_KEYS | frozenset(_KEY_ALIASES) | frozenset(_SPEED_MM_S_TO_ATTR)
 )
+_INTEGER_SETTINGS = frozenset({"number_perimeters", "num_perimeters", "processing_threads"})
 
 
 class ConfigError(ValueError):
@@ -118,16 +122,42 @@ def load_config_schema() -> dict[str, Any]:
 
 def validate_config(data: Mapping[str, Any], *, source: str | Path | None = None) -> None:
     """Validate config data against the JSON Schema. Raises ConfigError on failure."""
-    validator = Draft202012Validator(load_config_schema())
-    errors = sorted(validator.iter_errors(data), key=lambda e: list(e.path))
-    if not errors:
-        return
     where = f" in {source}" if source is not None else ""
+    if any(not isinstance(key, str) for key in data):
+        raise ConfigError(f"Invalid config{where}: setting names must be strings")
+    for key, value in data.items():
+        if key in _INTEGER_SETTINGS and type(value) is not int:
+            raise ConfigError(f"Invalid config{where}: {key} must be an integer")
+        if isinstance(value, (int, float)) and not _is_finite(value):
+            raise ConfigError(f"Invalid config{where}: {key} must be finite")
+
+    validator = Draft202012Validator(load_config_schema())
     messages = []
-    for err in errors:
+    for err in sorted(validator.iter_errors(data), key=lambda error: list(error.path)):
         path = ".".join(str(p) for p in err.path) or "(root)"
         messages.append(f"{path}: {err.message}")
-    raise ConfigError(f"Invalid config{where}: " + "; ".join(messages))
+    if messages:
+        raise ConfigError(f"Invalid config{where}: " + "; ".join(messages))
+
+
+def _is_finite(value):
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def validate_model_settings(model):
+    """Validate the final effective settings, mapped back to the schema's units."""
+    settings = {key: getattr(model, key) for key in _MODEL_SETTING_KEYS}
+    if settings["pressure_advance"] is None:
+        del settings["pressure_advance"]
+    # Outer and inner speeds already have separate native-unit schema keys.
+    for key in _SPEED_MM_S_TO_ATTR.keys() & _MODEL_SETTING_KEYS:
+        value = settings[key]
+        if type(value) in (int, float) and _is_finite(value):
+            settings[key] = value / 60.0
+    validate_config(settings, source="effective settings")
 
 
 def canonicalize_config(
@@ -156,7 +186,10 @@ def canonicalize_config(
     for key, value in data.items():
         if key in _SPEED_MM_S_TO_ATTR:
             attr = _SPEED_MM_S_TO_ATTR[key]
-            canonical[attr] = float(value) * 60.0
+            speed = float(value) * 60.0
+            if not math.isfinite(speed):
+                raise ConfigError(f"Invalid config{where}: {key} must be finite in mm/min")
+            canonical[attr] = speed
         elif key in _SPEED_MM_MIN_ATTRS:
             canonical[key] = float(value)
         elif key in _KEY_ALIASES:
@@ -170,9 +203,9 @@ def load_config_file(path: str | Path) -> dict[str, Any]:
     """Load one YAML file and return Model-native canonical settings."""
     path = Path(path)
     try:
-        with path.open(encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-    except OSError as exc:
+        text = read_text_input(path, MAX_CONFIG_BYTES, "Config file")
+        data = yaml.safe_load(text)
+    except (OSError, InputError, UnicodeError, yaml.YAMLError, RecursionError) as exc:
         raise ConfigError(f"Cannot read config {path}: {exc}") from exc
     if data is None:
         return {}
@@ -186,6 +219,8 @@ def load_layered_config(paths: list[str | Path]) -> dict[str, Any]:
     """Load YAML files in order; later layers replace overlapping Model settings."""
     if not paths:
         raise ConfigError("No config paths provided")
+    if len(paths) > MAX_CONFIG_FILES:
+        raise ConfigError(f"At most {MAX_CONFIG_FILES} config files are supported")
     merged: dict[str, Any] = {}
     for path in paths:
         layer = load_config_file(path)

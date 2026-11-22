@@ -4,6 +4,16 @@ from __future__ import annotations
 
 import math
 import re
+from io import StringIO
+
+from pyslicer.limits import (
+    InputError,
+    MAX_COORDINATE_MM,
+    MAX_FEED_MM_MIN,
+    MAX_LAYERS,
+    MAX_PREVIEW_BYTES,
+    MAX_PREVIEW_MOVES,
+)
 
 _G1_RE = re.compile(r"([XYZEF])(-?\d+(?:\.\d+)?)", re.IGNORECASE)
 _LAYER_RE = re.compile(r"Z:\s*([-\d.]+)")
@@ -25,11 +35,13 @@ DEFAULT_NOZZLE_DIAMETER_MM = 0.5
 
 def parse_planning_limits_from_gcode(gcode: str) -> dict | None:
     """Parse ``; pyslicer planning: ...`` comment into user-facing mm/s limits."""
-    for raw in gcode.splitlines():
+    for raw in _gcode_lines(gcode):
         m = _PLANNING_RE.search(raw)
         if not m:
             continue
-        vals = {k.lower(): float(v) for k, v in _PLANNING_KV_RE.findall(m.group(1))}
+        vals = {match[1].lower(): float(match[2]) for match in _PLANNING_KV_RE.finditer(m[1])}
+        if not all(math.isfinite(value) for value in vals.values()):
+            raise InputError("G-code preview settings must be finite")
         if not vals:
             return None
         outer = vals.get("outer")
@@ -44,6 +56,17 @@ def parse_planning_limits_from_gcode(gcode: str) -> dict | None:
             "minAngleDeg": vals.get("min_angle", 20.0),
         }
     return None
+
+
+def _gcode_lines(gcode):
+    if len(gcode) > MAX_PREVIEW_BYTES:
+        raise InputError(f"G-code preview exceeds the {MAX_PREVIEW_BYTES:,}-character limit")
+    return StringIO(gcode, newline=None)
+
+
+def _check_preview_coordinate(value):
+    if not math.isfinite(value) or abs(value) > MAX_COORDINATE_MM:
+        raise InputError(f"G-code preview coordinates must be finite and within ±{MAX_COORDINATE_MM:,} mm")
 
 
 def parse_gcode(gcode: str) -> tuple[list[dict], list[dict]]:
@@ -63,25 +86,36 @@ def parse_gcode(gcode: str) -> tuple[list[dict], list[dict]]:
     e = 0.0
     last_e = 0.0
     feed = DEFAULT_FEED_MM_MIN
+    move_count = 0
 
-    for raw in gcode.splitlines():
+    for raw in _gcode_lines(gcode):
         if raw.startswith(";; New Layer Z:"):
+            if len(layers) == MAX_LAYERS:
+                raise InputError(f"G-code preview exceeds the {MAX_LAYERS:,}-layer limit")
             m = _LAYER_RE.search(raw)
             zval = float(m.group(1)) if m else None
+            if zval is not None:
+                _check_preview_coordinate(zval)
             current = {"z": zval, "extrude": [], "travel": []}
             layers.append(current)
             if z is None and zval is not None:
                 z = zval
             continue
 
-        line = raw.split(";")[0].strip()
+        line = raw.split(";", 1)[0].strip()
         if not line or current is None:
             continue
-        if not line.upper().startswith("G1"):
+        if line[:2].upper() != "G1":
             continue
 
-        params = {k.upper(): float(v) for k, v in _G1_RE.findall(line)}
+        params = {match[1].upper(): float(match[2]) for match in _G1_RE.finditer(line)}
+        if not all(math.isfinite(value) for value in params.values()):
+            raise InputError("G-code preview moves must be finite")
+        for axis in params.keys() & {"X", "Y", "Z"}:
+            _check_preview_coordinate(params[axis])
         if "F" in params:
+            if abs(params["F"]) > MAX_FEED_MM_MIN:
+                raise InputError(f"G-code preview feed must be within ±{MAX_FEED_MM_MIN:,} mm/min")
             feed = params["F"]
         nx = params.get("X", x)
         ny = params.get("Y", y)
@@ -114,6 +148,11 @@ def parse_gcode(gcode: str) -> tuple[list[dict], list[dict]]:
             and (nx != x or ny != y or nz != z)
         )
         extruding = "E" in params and ne > last_e
+
+        if any_moved or xy_moved:
+            if move_count == MAX_PREVIEW_MOVES:
+                raise InputError(f"G-code preview exceeds the {MAX_PREVIEW_MOVES:,}-move limit")
+            move_count += 1
 
         if any_moved:
             moves.append(

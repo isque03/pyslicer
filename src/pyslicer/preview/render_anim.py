@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import math
+import re
+import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from pyslicer.preview.gcode_parse import (
@@ -22,6 +25,20 @@ _COLOR_GRID = (220, 220, 220)
 # GIF export truncates long prints so README/assets stay small (design rule).
 DEFAULT_GIF_MAX_SIM_SECONDS = 24.0
 DEFAULT_GIF_MAX_FRAMES = 120
+
+
+def require_gif_support():
+    """Reject unsupported optional Pillow versions before importing Pillow."""
+    if sys.version_info < (3, 11):
+        raise ImportError("GIF rendering requires Python 3.11 or newer")
+    message = 'GIF rendering requires Pillow 13.0.0 or newer. Install pyslicer[demo].'
+    try:
+        installed = version("Pillow")
+    except PackageNotFoundError as exc:
+        raise ImportError(message) from exc
+    release = re.fullmatch(r"(\d+)\.\d+\.\d+(?:\.post\d+)?(?:\+[\w.]+)?", installed)
+    if release is None or int(release.group(1)) < 13:
+        raise ImportError(message)
 
 
 def _bounds(moves: list[dict]) -> tuple[float, float, float, float, float, float]:
@@ -63,12 +80,8 @@ def write_simulation_gif(
     If ``max_sim_seconds`` is set, only the first that many seconds of *print*
     time are shown (truncated; status should mention this to callers).
     """
-    try:
-        from PIL import Image, ImageDraw
-    except ImportError as exc:  # pragma: no cover
-        raise ImportError(
-            "Pillow is required to render GIFs. Install with: pip install pillow"
-        ) from exc
+    require_gif_support()
+    from PIL import Image, ImageDraw
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

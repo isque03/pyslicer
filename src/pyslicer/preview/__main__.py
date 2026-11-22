@@ -34,14 +34,18 @@ def build_arg_parser():
 
 
 def main(argv=None):
-    args = build_arg_parser().parse_args(argv)
-    path = write_gcode_preview(
-        args.gcode,
-        args.html,
-        title=args.title,
-        subtitle=args.subtitle,
-        nozzle_diameter=args.nozzle_diameter,
-    )
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    try:
+        path = write_gcode_preview(
+            args.gcode,
+            args.html,
+            title=args.title,
+            subtitle=args.subtitle,
+            nozzle_diameter=args.nozzle_diameter,
+        )
+    except (OSError, ValueError) as exc:
+        parser.exit(2, f"error: {exc}\n")
     print(f"Wrote {Path(path).resolve()}")
 
 
