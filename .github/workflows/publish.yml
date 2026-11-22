@@ -1,0 +1,160 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Annotated stable tag matching pyproject.toml (dispatch from master)
+        required: true
+        type: string
+
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run-id: ${{ steps.source.outputs.run-id }}
+      artifact-id: ${{ steps.source.outputs.artifact-id }}
+      source-sha: ${{ steps.source.outputs.source-sha }}
+      version: ${{ steps.source.outputs.version }}
+      pypi-status: ${{ steps.registry.outputs.status }}
+    steps:
+      - name: Validate dispatch branch and tag format
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$GITHUB_REF" == refs/heads/master ]] || { echo 'Dispatch Publish from master.' >&2; exit 1; }
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo 'Expected a stable tag such as v0.2.0.' >&2; exit 1;
+          }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+
+      - name: Locate the exact successful master push Build
+        id: source
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          ref="refs/tags/$TAG"
+          [[ "$(git cat-file -t "$ref")" == tag ]] || { echo 'Expected an annotated tag.' >&2; exit 1; }
+          source_sha="$(git rev-parse "$ref^{commit}")"
+          git merge-base --is-ancestor "$source_sha" "$GITHUB_SHA" || {
+            echo 'The tagged commit must be an ancestor of the selected master commit.' >&2; exit 1;
+          }
+          version="$(git show "$source_sha:pyproject.toml" | python -c \
+            'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["project"]["version"])')"
+          [[ "$TAG" == "v$version" ]] || { echo 'Tag and pyproject.toml versions differ.' >&2; exit 1; }
+          run_id="$(gh run list --workflow build.yml --branch master --commit "$source_sha" \
+            --event push --status success --limit 10 --json databaseId --jq '.[0].databaseId // empty')"
+          [[ -n "$run_id" ]] || { echo "No successful push Build for $source_sha." >&2; exit 1; }
+          artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?name=pyslicer-distributions" \
+            --jq 'first(.artifacts[] | select(.name == "pyslicer-distributions" and (.expired | not)) | .id) // empty')"
+          [[ -n "$artifact_id" ]] || { echo "Build $run_id has no unexpired distributions artifact." >&2; exit 1; }
+          printf 'run-id=%s\nartifact-id=%s\nsource-sha=%s\nversion=%s\n' \
+            "$run_id" "$artifact_id" "$source_sha" "$version" >> "$GITHUB_OUTPUT"
+          echo "Selected Build $run_id, artifact $artifact_id, source $source_sha."
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.source.outputs.run-id }}
+          artifact-ids: ${{ steps.source.outputs.artifact-id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/release
+      - name: Check package metadata, hashes, and PyPI state
+        id: registry
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source-sha }}
+          VERSION: ${{ steps.source.outputs.version }}
+        shell: bash
+        run: |
+          python scripts/release_artifacts.py verify "$RUNNER_TEMP/release" "$SOURCE_SHA" "$VERSION"
+          status="$(python scripts/release_artifacts.py pypi "$RUNNER_TEMP/release")"
+          printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
+
+  pypi:
+    needs: prepare
+    if: needs.prepare.outputs.pypi-status == 'missing' || needs.prepare.outputs.pypi-status == 'partial'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pyslicer/${{ needs.prepare.outputs.version }}/
+    permissions:
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.prepare.outputs.run-id }}
+          artifact-ids: ${{ needs.prepare.outputs.artifact-id }}
+          merge-multiple: true
+          path: release
+      - name: Publish the verified distributions through PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: release/packages/
+          skip-existing: ${{ needs.prepare.outputs.pypi-status == 'partial' }}
+
+  github-release:
+    needs: [prepare, pypi]
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' &&
+      (needs.pypi.result == 'success' || needs.prepare.outputs.pypi-status == 'published')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.prepare.outputs.run-id }}
+          artifact-ids: ${{ needs.prepare.outputs.artifact-id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/release
+      - name: Verify PyPI and create or verify the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source-sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          bundle="$RUNNER_TEMP/release"
+          python scripts/release_artifacts.py verify "$bundle" "$SOURCE_SHA" "$VERSION"
+          python scripts/release_artifacts.py pypi "$bundle" --wait
+          remote_sha="$(git ls-remote --exit-code origin "refs/tags/$TAG^{}" | cut -f1)"
+          [[ "$remote_sha" == "$SOURCE_SHA" ]] || { echo 'The remote tag changed during Publish.' >&2; exit 1; }
+          if ! gh release view "$TAG" >/dev/null; then
+            gh release create "$TAG" --verify-tag --title "PySlicer $VERSION" --generate-notes \
+              "$bundle/manifest.json" "$bundle/packages/"*
+          fi
+          gh release view "$TAG" --json tagName,isDraft,isPrerelease,assets,url \
+            | python scripts/release_artifacts.py github "$bundle"
+          printf 'Verified PyPI and GitHub Releases for PySlicer %s (%s).\n' "$VERSION" "$SOURCE_SHA"

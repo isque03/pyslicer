@@ -89,3 +89,20 @@ def test_join_stops_at_closure_when_other_loop_is_within_stitch_radius():
     assert second.is_closed()
     assert len(second.segments) == 4
     assert segments == []
+
+
+def test_join_follows_short_edge_all_the_way_back_to_start():
+    last_vertex = 0.000005
+    segments = [
+        _seg(0, 0, 1, 0),
+        _seg(1, 0, 1, 1),
+        _seg(1, 1, 0, 1),
+        _seg(0, 1, 0, last_vertex),
+        _seg(0, last_vertex, 0, 0),
+    ]
+
+    contour = join_segments(segments)
+
+    assert contour.closed
+    assert len(contour.segments) == 5
+    assert segments == []

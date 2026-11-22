@@ -1,0 +1,92 @@
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.10', '3.14']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install '.[dev]'
+      - run: python -m pytest --cov=pyslicer
+
+  package:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+      - name: Build and inspect both distributions
+        run: |
+          python -m unittest discover -s scripts/tests
+          python -m pip install build twine
+          python -m build --outdir "$RUNNER_TEMP/release/packages"
+          python -m twine check --strict "$RUNNER_TEMP/release/packages/"*
+          python scripts/release_artifacts.py record "$RUNNER_TEMP/release" "$GITHUB_SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pyslicer-distributions
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+          retention-days: 30
+
+  install:
+    needs: package
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.10'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pyslicer-distributions
+          path: ${{ runner.temp }}/release
+      - name: Smoke-test clean wheel and sdist installs outside the checkout
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP"
+          test -f release/manifest.json
+          for package in release/packages/*; do
+            smoke_dir="$(mktemp -d "$RUNNER_TEMP/pyslicer-smoke.XXXXXX")"
+            python -m venv "$smoke_dir/venv"
+            bin="$smoke_dir/venv/bin"
+            "$bin/python" -m pip install "$package"
+            "$bin/python" -m pip check
+            "$bin/pyslicer" --help
+            "$bin/pyslicer-demo" --help
+            printf 'layer_height: 0.2\n' > "$smoke_dir/profile.yaml"
+            "$bin/pyslicer" "$GITHUB_WORKSPACE/tests/fixtures/cube_10mm.stl" \
+              "$smoke_dir/cube.gcode" --config "$smoke_dir/profile.yaml" --html-preview "$smoke_dir/cube.html"
+            test -s "$smoke_dir/cube.gcode"
+            test -s "$smoke_dir/cube.html"
+          done
