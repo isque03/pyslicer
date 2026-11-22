@@ -90,3 +90,20 @@ jobs:
             test -s "$smoke_dir/cube.gcode"
             test -s "$smoke_dir/cube.html"
           done
+
+  build-passed:
+    name: Build passed
+    needs: [test, package, install]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every build and install job to succeed
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          INSTALL_RESULT: ${{ needs.install.result }}
+        run: |
+          test "$TEST_RESULT" = success
+          test "$PACKAGE_RESULT" = success
+          test "$INSTALL_RESULT" = success
