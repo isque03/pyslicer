@@ -2,9 +2,9 @@
 
 pyslicer turns a 3D model file (STL) into printer instructions (G-code) for a filament 3D printer.
 
-It reads the model, cuts it into thin layers, draws the outer walls and fill pattern, then writes a G-code file your printer can run.
+It reads the model, cuts it into layers, and generates walls, infill, and a browser preview of the print paths. PySlicer is early-stage software. Before running its G-code, confirm that the model placement and fixed startup and shutdown commands suit your printer. Automatic support generation is unavailable.
 
-![Simulated #3DBenchy print at 2×](docs/benchy_demo.gif)
+![Simulated #3DBenchy print at 2×](https://raw.githubusercontent.com/isque03/pyslicer/master/docs/benchy_demo.gif)
 
 ## Requirements
 
@@ -13,13 +13,11 @@ It reads the model, cuts it into thin layers, draws the outer walls and fill pat
 
 ## Install
 
-From the project folder:
-
 ```bash
-pip install -e ".[dev]"
+python -m pip install pyslicer
 ```
 
-That installs pyslicer and the tools used to run tests.
+The `demo` extra adds GIF rendering support. Install it with `python -m pip install "pyslicer[demo]"`.
 
 ## Use it
 
@@ -112,7 +110,7 @@ Values are not interchangeable. Default `firmware: none` emits nothing.
 Do not use slicer coasting / “advanced pressure” hacks with Klipper.
 
 Available keys and types are defined in
-[`src/pyslicer/config.schema.json`](src/pyslicer/config.schema.json)
+[`src/pyslicer/config.schema.json`](https://github.com/isque03/pyslicer/blob/master/src/pyslicer/config.schema.json)
 (validated automatically when you pass `--config`).
 In VS Code / yaml-language-server, point a file at the schema like this:
 
@@ -163,7 +161,10 @@ In the HTML viewer you can **Record movie** (WebM) or **Export GIF** of the simu
 
 ## Tests
 
+From the repository checkout:
+
 ```bash
+python -m pip install -e ".[dev]"
 pytest
 ```
 
@@ -179,7 +180,8 @@ pytest --cov=pyslicer
 - `src/pyslicer/` — the slicer code (geometry, slicing, fill, G-code)
 - `tests/` — unit tests, including checks that G-code numbers and commands are correct
 - `pyproject.toml` — package and dependency settings
+- [Release procedure](https://github.com/isque03/pyslicer/blob/master/docs/PUBLISHING.md)
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/isque03/pyslicer/blob/master/LICENSE).
